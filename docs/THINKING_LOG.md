@@ -334,7 +334,7 @@ Ran a parallel 3-agent code review across the full codebase. 32 findings total (
 The review surfaced several items that were already noted as open questions (auth, tests). Updated priorities based on actual findings:
 
 1. ~~**Fix path traversal bugs**~~ — **DONE** (a2faac1). Added `resolve()+startswith()` to `list_logs` and MCP `get_log`. MCP error messages no longer leak paths. → [#1](https://github.com/sjwe/cronbox/issues/1) (closed)
-2. **Add authentication** — at minimum API key middleware on mutating endpoints (trigger, reload). Change default bind to `127.0.0.1`. → [#2](https://github.com/sjwe/cronbox/issues/2)
+2. ~~**Add authentication**~~ — **DONE** (pending commit). API key middleware on all API routes + default bind changed to `127.0.0.1`. → [#2](https://github.com/sjwe/cronbox/issues/2) (closed)
 3. ~~**Add test infrastructure + critical tests**~~ — **DONE** (ac834ad). → [#5](https://github.com/sjwe/cronbox/issues/5) (closed)
 4. ~~**Batch N+1 queries**~~ — **DONE** (a2faac1). `ROW_NUMBER()` window function in shared `models/queries.py`. `get_all_next_run_times()` batch method. → [#3](https://github.com/sjwe/cronbox/issues/3) (closed)
 5. ~~**Cap log file reads**~~ — **DONE** (a2faac1). `read_log_tail()` in `utils.py` caps at 1MB. `list_logs` paginated with `?limit=N`. → [#4](https://github.com/sjwe/cronbox/issues/4) (closed)
@@ -418,12 +418,45 @@ Both API `get_log` and MCP `get_log` now use `read_log_tail()`.
 
 ---
 
+## 2026-02-11 — Second Round Fixes (#2, #7, #9)
+
+Fixed the remaining high-priority issue and two medium issues. 69 tests pass (was 58 before, +11 new tests).
+
+### Issue #2: API Authentication
+
+**`config.py`**: Changed default `api_host` from `0.0.0.0` to `127.0.0.1`. Added `api_key: str = ""` setting (empty = no auth, for local dev).
+
+**New `api/auth.py`**: `verify_api_key` FastAPI dependency that checks `X-API-Key` header or `Authorization: Bearer` header against `settings.api_key`. When `api_key` is empty, all requests pass through — existing tests unaffected.
+
+**`main.py`**: Added `Depends(verify_api_key)` to all 3 API router includes. Frontend static files are NOT auth-gated (served via separate `StaticFiles` mount).
+
+**Design choice — auth on all routes, not just mutating**: Even read endpoints expose sensitive data (logs, job configs, run history). Protecting only POST endpoints would still leak information. Simple API key is appropriate for a single-user ops tool; can upgrade to JWT later if multi-user is needed.
+
+### Issue #7: Harden Background Task
+
+**`routes_jobs.py`**:
+- `_running_tasks: dict[str, asyncio.Task]` tracks active background tasks by job name
+- `_task_done_callback()` cleans up the dict and logs warnings/errors for cancelled or failed tasks (no more silent exception swallowing)
+- Concurrency guard: returns 409 Conflict if a trigger request comes in while the same job is already running
+
+### Issue #9: Stop Leaking Filesystem Paths
+
+**`routes_runs.py` and `mcp/server.py`**: `log_file` field stripped from full path (e.g., `logs/test-job/20240101.log` or `/home/user/cronbox/logs/test-job/20240101.log`) to just `job_name/filename` (e.g., `test-job/20240101.log`). Handles both relative and absolute stored paths.
+
+**Frontend note**: The frontend `LogViewer` already extracted the filename with `.split("/").pop()`, so stripping the prefix is backwards-compatible — it still gets the filename it needs.
+
+### New files
+- `src/cronbox/api/auth.py` — API key authentication dependency
+- `tests/api/test_auth.py` — 6 auth tests
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.
 - **Job dependencies**: No job-to-job dependency support in v1. If needed later, could add a `depends_on` field.
 - **Config hot-reload via filesystem watcher**: v1 uses a manual `POST /api/config/reload` endpoint. Could add `watchfiles` to auto-detect YAML changes later.
-- ~~**Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.~~ **Escalated**: Code review confirmed this is the #1 security priority. Default `0.0.0.0` bind + zero auth = full API exposed to anyone on the network.
+- ~~**Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.~~ **Resolved**: API key middleware added. Default bind changed to `127.0.0.1`. Set `CRONBOX_API_KEY` env var to enable.
 - **WebSocket for live logs**: v1 polls for log content. Could upgrade to WebSocket streaming for real-time log following.
 - **Log retention cleanup**: `CRONBOX_LOG_RETENTION_DAYS` is configured but the cleanup task is not yet implemented. Needs a periodic job that deletes log files older than the threshold.
 - ~~**Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.~~ **Resolved** (ac834ad): 72 tests added (52 backend, 20 frontend). Remaining gaps: runner, engine, database, runs routes, config, MCP server — placeholder files ready.

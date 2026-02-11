@@ -20,10 +20,10 @@
 
 ## Security Findings
 
-### HIGH: No authentication on any endpoint
+### ~~HIGH: No authentication on any endpoint~~ — FIXED (pending commit)
 - **File:** `src/cronbox/main.py:57-65`
 - **Issue:** The entire API is unauthenticated. Anyone who can reach the server can trigger Docker job execution, read all logs, and reload configuration.
-- **Recommendation:** Add API key or JWT middleware, at minimum on mutating endpoints (trigger, reload).
+- **Fix:** New `api/auth.py` with API key middleware (`X-API-Key` or `Bearer` header). Applied to all API routes via `Depends()`. Default `api_key=""` means no auth for local dev. 6 tests added.
 
 ### ~~HIGH: Path traversal in list_logs~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/api/routes_logs.py:12-18`
@@ -35,15 +35,15 @@
 - **Issue:** Two vulnerable paths: (1) `log_path` read directly from DB with no validation, (2) `job_name` from MCP input joined into path with no traversal check. Both allow arbitrary file reads.
 - **Fix:** Added `resolve()+startswith()` validation on both DB-stored and user-supplied paths.
 
-### MEDIUM: Default bind on 0.0.0.0
+### ~~MEDIUM: Default bind on 0.0.0.0~~ — FIXED (pending commit)
 - **File:** `src/cronbox/config.py:12`
 - **Issue:** API binds to all interfaces by default. Combined with no auth, this exposes the full API to the local network.
-- **Recommendation:** Default to `127.0.0.1`. Users who need network access can set `CRONBOX_API_HOST=0.0.0.0`.
+- **Fix:** Default changed to `127.0.0.1`.
 
-### MEDIUM: Server filesystem paths leaked in API responses
+### ~~MEDIUM: Server filesystem paths leaked in API responses~~ — FIXED (pending commit)
 - **File:** `src/cronbox/api/routes_runs.py:83`, `src/cronbox/mcp/server.py:228`
 - **Issue:** Full server-side log file paths exposed to API consumers, leaking internal directory structure.
-- **Recommendation:** Return relative paths or just filenames.
+- **Fix:** `log_file` stripped to `job_name/filename` in both API and MCP responses. 4 tests added.
 
 ### MEDIUM: Alpha pre-release dependency
 - **File:** `pyproject.toml:8`
@@ -113,10 +113,10 @@
 - **Issue:** Creates a DOM element per log line on every render. 10,000 lines = 10,000 DOM nodes.
 - **Recommendation:** Use `react-window` or `@tanstack/virtual` for virtualized rendering.
 
-### MEDIUM: Untracked background tasks
+### ~~MEDIUM: Untracked background tasks~~ — FIXED (pending commit)
 - **File:** `src/cronbox/api/routes_jobs.py:144`
 - **Issue:** `asyncio.create_task()` with no stored reference and no concurrency guard. Exceptions silently swallowed.
-- **Recommendation:** Store task refs, add `add_done_callback()` for error logging, guard against duplicate runs.
+- **Fix:** Task refs tracked in `_running_tasks` dict. Done callback logs errors. 409 Conflict on duplicate trigger. 2 tests added.
 
 ---
 
@@ -134,14 +134,14 @@
 | `executor/docker_ops.py:4` | All Docker operations — start, exec, ephemeral runs, output demuxing | **9 tests added** |
 | `scheduler/engine.py:10` | Cron scheduling — fragile 5-part cron parsing, APScheduler lifecycle | Placeholder |
 | `scheduler/loader.py:8` | YAML config loading — missing validation for invalid YAML, empty files, missing fields | **8 tests added** |
-| `api/routes_jobs.py` | 4 endpoints including trigger (executes Docker) and reload (modifies scheduler) | **7 tests added** |
-| `api/routes_runs.py` | Run listing with pagination and filtering | Placeholder |
+| `api/routes_jobs.py` | 4 endpoints including trigger (executes Docker) and reload (modifies scheduler) | **9 tests added** |
+| `api/routes_runs.py` | Run listing with pagination and filtering | **4 tests added** |
 
 ### HIGH: Untested security-critical and integration modules
 
 | File | What's Untested | Status |
 |------|-----------------|--------|
-| `api/routes_logs.py` | Path traversal guard is security-critical with zero tests | **6 tests added (incl. traversal test)** |
+| `api/routes_logs.py` | Path traversal guard is security-critical with zero tests | **12 tests added (traversal + truncation + pagination)** |
 | `mcp/server.py` | 7 MCP tools + 3 resources | Placeholder |
 | `notifications/discord.py` | Webhook payload construction, HTTP error handling | **4 tests added** |
 | `models/database.py` | Schema creation, ORM relationships, session lifecycle | Placeholder |
@@ -173,7 +173,7 @@ Placeholder test files exist for these modules — can be filled incrementally:
 - `tests/executor/test_runner.py` — job execution engine (step sequencing, timeouts, failure cascading)
 - `tests/scheduler/test_engine.py` — APScheduler lifecycle, cron registration
 - `tests/models/test_database.py` — ORM relationships, schema creation
-- `tests/api/test_routes_runs.py` — pagination, filtering
+- ~~`tests/api/test_routes_runs.py` — pagination, filtering~~ **4 tests added** (path stripping, absolute paths, null log_file, 404)
 - `tests/test_config.py` — env var loading
 - `tests/mcp/test_server.py` — MCP tools and resources
 
@@ -181,7 +181,7 @@ Placeholder test files exist for these modules — can be filled incrementally:
 
 ## Top 5 Recommendations by Impact
 
-1. **Add authentication** — the API is wide open. Even a simple API key middleware would dramatically improve security posture. → [#2](https://github.com/sjwe/cronbox/issues/2)
+1. ~~**Add authentication**~~ — **DONE** (pending commit). API key middleware + default bind changed to `127.0.0.1`. → [#2](https://github.com/sjwe/cronbox/issues/2) (closed)
 2. ~~**Fix path traversal in `list_logs` and MCP `get_log`**~~ — **DONE** (a2faac1). Added `resolve()+startswith()` guards + 2 traversal tests. → [#1](https://github.com/sjwe/cronbox/issues/1) (closed)
 3. ~~**Add test infrastructure and critical path tests**~~ — **DONE** (ac834ad). 72 tests across 9 files. → [#5](https://github.com/sjwe/cronbox/issues/5) (closed)
 4. ~~**Batch the N+1 queries in `list_jobs`**~~ — **DONE** (a2faac1). Window function batch query + `get_all_next_run_times()`. → [#3](https://github.com/sjwe/cronbox/issues/3) (closed)
@@ -192,12 +192,12 @@ Placeholder test files exist for these modules — can be filled incrementally:
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
 | [#1](https://github.com/sjwe/cronbox/issues/1) | Fix path traversal vulnerabilities | High | **Closed** (a2faac1) |
-| [#2](https://github.com/sjwe/cronbox/issues/2) | Add API authentication | High | Open |
+| [#2](https://github.com/sjwe/cronbox/issues/2) | Add API authentication | High | **Closed** |
 | [#3](https://github.com/sjwe/cronbox/issues/3) | Fix N+1 queries in list_jobs | High | **Closed** (a2faac1) |
 | [#4](https://github.com/sjwe/cronbox/issues/4) | Add size limits to log file reads | High | **Closed** (a2faac1) |
 | [#5](https://github.com/sjwe/cronbox/issues/5) | Add test infrastructure and critical path tests | Critical | **Closed** (ac834ad) |
 | [#6](https://github.com/sjwe/cronbox/issues/6) | Reduce Docker client overhead | Medium | Open |
-| [#7](https://github.com/sjwe/cronbox/issues/7) | Harden fire-and-forget background task | Medium | Open |
+| [#7](https://github.com/sjwe/cronbox/issues/7) | Harden fire-and-forget background task | Medium | **Closed** |
 | [#8](https://github.com/sjwe/cronbox/issues/8) | Virtualize LogViewer for large logs | Medium | Open |
-| [#9](https://github.com/sjwe/cronbox/issues/9) | Stop leaking filesystem paths in API responses | Medium | Open |
+| [#9](https://github.com/sjwe/cronbox/issues/9) | Stop leaking filesystem paths in API responses | Medium | **Closed** |
 | [#10](https://github.com/sjwe/cronbox/issues/10) | Pin APScheduler to a tested version | Medium | Open |

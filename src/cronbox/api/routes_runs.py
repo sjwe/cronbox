@@ -72,6 +72,17 @@ async def get_run(run_id: int, request: Request):
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
+    # Strip logs dir prefix, return only job_name/filename
+    log_file_relative = None
+    if run.log_file:
+        from pathlib import Path
+
+        lf = Path(run.log_file)
+        try:
+            log_file_relative = f"{lf.parent.name}/{lf.name}"
+        except Exception:
+            log_file_relative = lf.name
+
     return RunDetail(
         id=run.id,
         job_name=run.job_name,
@@ -80,7 +91,7 @@ async def get_run(run_id: int, request: Request):
         started_at=run.started_at,
         finished_at=run.finished_at,
         duration_seconds=run.duration_seconds,
-        log_file=run.log_file,
+        log_file=log_file_relative,
         steps=[
             StepResultResponse(
                 name=s.step_name,

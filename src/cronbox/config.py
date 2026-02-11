@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     db_path: str = "data/cronbox.db"
     discord_webhook_url: str = ""
     web_base_url: str = ""
-    api_host: str = "0.0.0.0"
+    api_key: str = ""  # empty = no auth required (local dev)
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     log_retention_days: int = 30

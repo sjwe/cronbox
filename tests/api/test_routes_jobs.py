@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -86,6 +87,7 @@ class TestGetJob:
 
 class TestTriggerJob:
     async def test_trigger_existing_job(self, async_client):
+        from cronbox.api import routes_jobs
         from cronbox.main import app
 
         config = _make_job_config()
@@ -97,6 +99,29 @@ class TestTriggerJob:
         assert data["job_name"] == "test-job"
         assert "triggered" in data["message"].lower() or "trigger" in data["message"].lower()
 
+        # Clean up tracked task created by the trigger
+        routes_jobs._running_tasks.clear()
+
     async def test_trigger_nonexistent_job(self, async_client):
         resp = await async_client.post("/api/jobs/no-such-job/trigger")
         assert resp.status_code == 404
+
+    async def test_trigger_already_running_returns_409(self, async_client):
+        """Triggering a job that's already running returns 409 Conflict."""
+        from cronbox.api import routes_jobs
+        from cronbox.main import app
+
+        config = _make_job_config()
+        app.state.scheduler_engine.get_config.return_value = config
+
+        # Simulate a running task
+        running_task = asyncio.Future()  # never completes
+        routes_jobs._running_tasks["test-job"] = asyncio.ensure_future(running_task)
+
+        try:
+            resp = await async_client.post("/api/jobs/test-job/trigger")
+            assert resp.status_code == 409
+            assert "already running" in resp.json()["detail"]
+        finally:
+            running_task.cancel()
+            routes_jobs._running_tasks.clear()

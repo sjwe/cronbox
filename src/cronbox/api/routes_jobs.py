@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -20,7 +21,20 @@ from cronbox.scheduler.loader import load_jobs
 
 from sqlalchemy import select
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api")
+
+# Track running background tasks by job name
+_running_tasks: dict[str, asyncio.Task] = {}
+
+
+def _task_done_callback(job_name: str, task: asyncio.Task):
+    _running_tasks.pop(job_name, None)
+    if task.cancelled():
+        logger.warning("Job '%s' task was cancelled", job_name)
+    elif exc := task.exception():
+        logger.error("Job '%s' failed with exception: %s", job_name, exc, exc_info=exc)
 
 
 @router.get("/jobs", response_model=list[JobSummary])
@@ -132,6 +146,11 @@ async def trigger_job(name: str, request: Request):
     if not config:
         raise HTTPException(status_code=404, detail=f"Job '{name}' not found")
 
+    # Concurrency guard: prevent duplicate simultaneous runs
+    existing_task = _running_tasks.get(name)
+    if existing_task and not existing_task.done():
+        raise HTTPException(status_code=409, detail=f"Job '{name}' is already running")
+
     settings = request.app.state.settings
     session_factory = request.app.state.session_factory
 
@@ -139,7 +158,10 @@ async def trigger_job(name: str, request: Request):
         async with session_factory() as session:
             await execute_job(config, "manual", db_session=session, settings=settings)
 
-    asyncio.create_task(run_in_background())
+    task = asyncio.create_task(run_in_background())
+    task.add_done_callback(lambda t: _task_done_callback(name, t))
+    _running_tasks[name] = task
+
     return TriggerResponse(message="Job triggered", job_name=name)
 
 

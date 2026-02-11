@@ -213,6 +213,15 @@ async def get_run(run_id: int) -> str:
     if not run:
         return json.dumps({"error": f"Run {run_id} not found"})
 
+    # Strip logs dir prefix, return only job_name/filename
+    log_file_relative = None
+    if run.log_file:
+        lf = Path(run.log_file)
+        try:
+            log_file_relative = f"{lf.parent.name}/{lf.name}"
+        except Exception:
+            log_file_relative = lf.name
+
     return json.dumps(
         {
             "id": run.id,
@@ -224,7 +233,7 @@ async def get_run(run_id: int) -> str:
             if run.finished_at
             else None,
             "duration_seconds": run.duration_seconds,
-            "log_file": run.log_file,
+            "log_file": log_file_relative,
             "step_results": [
                 {
                     "step_name": s.step_name,

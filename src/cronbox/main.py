@@ -2,9 +2,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from cronbox.api.auth import verify_api_key
 from cronbox.api.routes_jobs import router as jobs_router
 from cronbox.api.routes_logs import router as logs_router
 from cronbox.api.routes_runs import router as runs_router
@@ -55,9 +56,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="cronbox", version="0.1.0", lifespan=lifespan)
-app.include_router(jobs_router)
-app.include_router(runs_router)
-app.include_router(logs_router)
+app.include_router(jobs_router, dependencies=[Depends(verify_api_key)])
+app.include_router(runs_router, dependencies=[Depends(verify_api_key)])
+app.include_router(logs_router, dependencies=[Depends(verify_api_key)])
 
 # Mount frontend static files if the dist directory exists
 frontend_dist = Path("frontend/dist")
