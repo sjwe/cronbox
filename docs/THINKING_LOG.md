@@ -451,12 +451,112 @@ Fixed the remaining high-priority issue and two medium issues. 69 tests pass (wa
 
 ---
 
+## 2026-02-11 — Authentication System Design
+
+### Problem
+
+The single shared API key (`CRONBOX_API_KEY`) is insufficient for multi-user deployment:
+- No per-user credentials or identity tracking
+- No frontend login — the UI is either fully open or inaccessible
+- No per-user API keys for programmatic access
+- No role-based access control — any authenticated user can do everything
+- API keys have no expiration
+
+### Decision: JWT + Per-User API Keys + 3-Role RBAC
+
+**Auth mechanisms (3, coexisting):**
+
+1. **JWT access/refresh tokens** for browser sessions. Access tokens (15min) in localStorage, refresh tokens (7 days) as httpOnly cookies. Login via username/password form.
+2. **Per-user API keys** for programmatic and MCP access. Format: `cb_` prefix + random bytes, SHA-256 hashed for storage. Returned once on creation, 30-day default expiration.
+3. **Legacy shared API key** (`CRONBOX_API_KEY`) for backwards compatibility during migration.
+
+**Why JWT + API keys (not just one):**
+- JWTs are ideal for browser sessions: short-lived, stateless verification, automatic refresh
+- API keys are ideal for scripts/MCP: long-lived, simple header inclusion, no login flow needed
+- Both resolve to the same User object and go through the same RBAC checks
+
+**Password hashing:** bcrypt via `passlib`. Industry standard, slow-by-design for brute-force resistance.
+
+**API key hashing:** SHA-256. Fast verification is fine here since keys are high-entropy random tokens (not passwords). Prefixed with `cb_` for easy identification.
+
+### Decision: 3 Roles (admin / operator / viewer)
+
+| Role | Capabilities |
+|------|-------------|
+| **viewer** | Read all jobs, runs, logs. Manage own API keys. |
+| **operator** | Everything viewer can do + trigger jobs |
+| **admin** | Everything operator can do + reload config, manage users |
+
+**Enforcement:** FastAPI dependency injection. `require_role()` factory returns a `Depends()` callable that checks the current user's role. Applied per-endpoint where the default auth isn't sufficient.
+
+**Why not just admin/viewer:** The operator role covers the common case of a team member who needs to manually trigger jobs (e.g., re-run a failed data sync) but shouldn't be able to change scheduler config or create users.
+
+### Decision: CLI Bootstrap (not open registration)
+
+**Choice:** `cronbox create-user --username admin --email admin@example.com --role admin`
+
+**Why not open registration:** This is an ops tool, not a SaaS product. The admin controls who has access. Open registration would require invitation/approval workflow complexity.
+
+**Why not env var seed:** Env vars are visible in process listings and Docker inspect. A CLI command with password prompting is more secure for the initial setup.
+
+### Decision: Full Backwards Compatibility
+
+Auth behavior is determined by which env vars are set:
+- No `JWT_SECRET`, no `API_KEY` → dev mode (no auth, same as original behavior)
+- No `JWT_SECRET`, `API_KEY` set → legacy single-key auth (current behavior)
+- `JWT_SECRET` set → full multi-user auth system
+
+This means existing deployments continue working unchanged. Users migrate at their own pace by setting `CRONBOX_JWT_SECRET` and running `cronbox create-user`.
+
+### Decision: Refresh Token in httpOnly Cookie
+
+**Why not localStorage for refresh token:** XSS attacks can steal tokens from localStorage. httpOnly cookies are inaccessible to JavaScript, limiting the blast radius of XSS.
+
+**Why access token stays in localStorage:** The access token must be included in the `Authorization` header for API requests, which requires JavaScript access. It's short-lived (15min), limiting exposure.
+
+**API client fallback:** The refresh token is also returned in the login response body for non-browser clients (scripts, MCP) that can't use cookies.
+
+### Decision: MCP Auth via Pre-configured API Key
+
+**Choice:** `CRONBOX_MCP_API_KEY` env var, resolved against the `api_keys` table at startup.
+
+**Why not JWT for MCP:** The MCP server runs as a subprocess (STDIO transport) or background service (HTTP transport). There's no interactive login flow. A pre-configured API key is simpler and appropriate for machine-to-machine auth.
+
+### New Files
+
+**Backend:**
+- `src/cronbox/models/auth.py` — User, APIKey, RefreshToken SQLAlchemy models + password/key helpers
+- `src/cronbox/api/permissions.py` — RBAC dependency factories
+- `src/cronbox/api/routes_auth.py` — login, refresh, logout, me endpoints
+- `src/cronbox/api/routes_keys.py` — API key CRUD endpoints
+- `src/cronbox/api/routes_users.py` — admin user management endpoints
+- `src/cronbox/cli.py` — CLI with create-user and serve subcommands
+
+**Frontend:**
+- `frontend/src/context/AuthContext.tsx` — auth state management
+- `frontend/src/components/Login.tsx` — login page
+- `frontend/src/components/ProtectedRoute.tsx` — auth gate wrapper
+- `frontend/src/components/Settings.tsx` — API key management page
+- `frontend/src/components/AdminUsers.tsx` — admin user management page
+
+**Modified:**
+- `src/cronbox/config.py` — jwt_secret, token expiry, mcp_api_key settings
+- `src/cronbox/api/auth.py` — rewrite verify_api_key → get_current_user (JWT + API key + legacy)
+- `src/cronbox/main.py` — wire new routers, import auth models, RBAC deps
+- `src/cronbox/mcp/server.py` — API key auth + permission checks on mutating tools
+- `frontend/src/api.ts` — auth headers, 401 handling, new API functions
+- `frontend/src/App.tsx` — new routes, ProtectedRoute wrapper
+- `frontend/src/components/Layout.tsx` — nav links, user info, logout
+- `pyproject.toml` — new deps (passlib, pyjwt, python-multipart) + CLI entry point
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.
 - **Job dependencies**: No job-to-job dependency support in v1. If needed later, could add a `depends_on` field.
 - **Config hot-reload via filesystem watcher**: v1 uses a manual `POST /api/config/reload` endpoint. Could add `watchfiles` to auto-detect YAML changes later.
-- ~~**Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.~~ **Resolved**: API key middleware added. Default bind changed to `127.0.0.1`. Set `CRONBOX_API_KEY` env var to enable.
+- ~~**Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.~~ **Fully resolved**: Multi-user JWT auth + per-user API keys + 3-role RBAC (admin/operator/viewer). Frontend login page, API key management UI, admin user management. CLI bootstrap with `cronbox create-user`. Full backwards compatibility (empty jwt_secret = dev mode). See "Authentication System Design" section above.
 - **WebSocket for live logs**: v1 polls for log content. Could upgrade to WebSocket streaming for real-time log following.
 - **Log retention cleanup**: `CRONBOX_LOG_RETENTION_DAYS` is configured but the cleanup task is not yet implemented. Needs a periodic job that deletes log files older than the threshold.
 - ~~**Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.~~ **Resolved** (ac834ad): 72 tests added (52 backend, 20 frontend). Remaining gaps: runner, engine, database, runs routes, config, MCP server — placeholder files ready.

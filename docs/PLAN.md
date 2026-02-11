@@ -6,10 +6,11 @@ Replace ad-hoc crontab + shell scripts with a proper job scheduler that runs all
 
 ## Stack
 
-- **Backend**: Python 3.12+ — FastAPI (API + static file serving), APScheduler 4.x (scheduling), Docker SDK (container ops), SQLAlchemy + aiosqlite (run history), httpx (Discord webhooks)
-- **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS + TanStack Query
+- **Backend**: Python 3.12+ — FastAPI (API + static file serving), APScheduler 4.x (scheduling), Docker SDK (container ops), SQLAlchemy + aiosqlite (run history + user/auth data), httpx (Discord webhooks), PyJWT (authentication tokens), passlib[bcrypt] (password hashing)
+- **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS v4 + TanStack Query
 - **Config**: YAML files in `config/jobs/` (one per job)
-- **Storage**: SQLite for run metadata, disk files for logs
+- **Storage**: SQLite for run metadata + users + API keys, disk files for logs
+- **Auth**: JWT access/refresh tokens for browser sessions, per-user API keys for programmatic access, 3-role RBAC (admin/operator/viewer)
 
 ## Project Structure
 
@@ -29,10 +30,14 @@ cronbox/
 │   ├── __init__.py
 │   ├── main.py                      # FastAPI app + lifespan
 │   ├── config.py                    # Settings (env-configurable via CRONBOX_ prefix)
+│   ├── cli.py                       # CLI: `cronbox create-user`, `cronbox serve`
+│   ├── utils.py                     # Shared utilities (read_log_tail)
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── job_config.py            # Pydantic models for YAML schema
 │   │   ├── database.py              # SQLAlchemy models (job_runs, step_results)
+│   │   ├── auth.py                  # Auth models (users, api_keys, refresh_tokens)
+│   │   ├── queries.py               # Shared query helpers (batch latest runs)
 │   │   └── api_models.py            # API response schemas
 │   ├── scheduler/
 │   │   ├── __init__.py
@@ -52,6 +57,11 @@ cronbox/
 │   │   └── __main__.py              # `python -m cronbox.mcp` entrypoint
 │   └── api/
 │       ├── __init__.py
+│       ├── auth.py                  # Auth dependency (JWT + API key verification)
+│       ├── permissions.py           # RBAC dependency factories (require_admin, etc.)
+│       ├── routes_auth.py           # /api/auth — login, refresh, logout, me
+│       ├── routes_keys.py           # /api/keys — API key CRUD
+│       ├── routes_users.py          # /api/admin/users — user management (admin-only)
 │       ├── routes_jobs.py           # /api/jobs — list, detail, trigger, reload
 │       ├── routes_runs.py           # /api/runs — run history + detail
 │       └── routes_logs.py           # /api/logs — log file listing + content
@@ -61,12 +71,18 @@ cronbox/
 │   ├── tsconfig.json
 │   ├── index.html
 │   └── src/
-│       ├── main.tsx
-│       ├── App.tsx                   # Router: / → JobList, /jobs/:name → JobDetail
-│       ├── api.ts                    # Fetch wrapper for REST API
+│       ├── main.tsx                  # Entry: AuthProvider + QueryClient + Router
+│       ├── App.tsx                   # Router with protected routes
+│       ├── api.ts                    # Fetch wrapper with auth headers + 401 handling
 │       ├── types.ts                  # TypeScript types mirroring API models
+│       ├── context/
+│       │   └── AuthContext.tsx       # Auth state: login, logout, token refresh
 │       └── components/
-│           ├── Layout.tsx            # Shell with header + nav
+│           ├── Layout.tsx            # Shell with header + nav + user menu
+│           ├── Login.tsx             # Login page (username/password)
+│           ├── ProtectedRoute.tsx    # Auth gate wrapper
+│           ├── Settings.tsx          # User profile + API key management
+│           ├── AdminUsers.tsx        # Admin user management (admin-only)
 │           ├── JobList.tsx           # Dashboard table with status badges
 │           ├── JobDetail.tsx         # Config + run history + trigger button
 │           ├── LogViewer.tsx         # Monospace log viewer with follow mode
@@ -200,21 +216,88 @@ Docker operations are blocking I/O, run in thread pool via `asyncio.to_thread()`
 - **Per-step**: `asyncio.wait_for(step_coro, timeout=step.timeout_seconds)`
 - **Per-job**: `asyncio.wait_for(job_coro, timeout=job.timeout_seconds)`
 
+## Authentication & Authorization
+
+### Overview
+
+Multi-user auth with three mechanisms:
+1. **JWT tokens** — for browser sessions (login page → access token in localStorage + refresh token in httpOnly cookie)
+2. **Per-user API keys** — for programmatic/MCP access (`cb_` prefixed, SHA-256 hashed, 30-day default expiry)
+3. **Legacy API key** — backwards-compatible single shared key via `CRONBOX_API_KEY` env var
+
+### Roles
+
+| Role | Read (jobs/runs/logs) | Trigger jobs | Reload config | Manage users |
+|------|----------------------|-------------|---------------|-------------|
+| **viewer** | Yes | No | No | No |
+| **operator** | Yes | Yes | No | No |
+| **admin** | Yes | Yes | Yes | Yes |
+
+### Auth Flow
+
+- **Browser**: Login with username/password → JWT access token (15min) stored in localStorage, refresh token (7 days) as httpOnly cookie. Frontend auto-refreshes on 401.
+- **API/MCP**: Include `X-API-Key: cb_...` header or `Authorization: Bearer cb_...` with a per-user API key.
+- **Dev mode**: When `CRONBOX_JWT_SECRET` is empty and `CRONBOX_API_KEY` is empty, no auth required (local development).
+
+### API Key Format
+
+Keys use `cb_` prefix + 32 bytes of `secrets.token_urlsafe()`. Only the SHA-256 hash is stored. The full key is returned exactly once on creation. Display format shows only the prefix (e.g., `cb_xK7m2p9R...`).
+
+### Bootstrap
+
+First admin user is created via CLI:
+```bash
+cronbox create-user --username admin --email admin@example.com --role admin
+```
+
 ## API Endpoints
 
-All routes prefixed with `/api`. Frontend served at `/` as static files.
+All routes prefixed with `/api`. Frontend served at `/` as static files. All endpoints except `/api/auth/*` require authentication.
+
+### Auth Endpoints (unauthenticated)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/jobs` | List all jobs with next run time + last status |
-| GET | `/api/jobs/{name}` | Job detail + step list + recent runs |
-| POST | `/api/jobs/{name}/trigger` | Trigger immediate manual run |
-| POST | `/api/config/reload` | Hot-reload YAML configs into scheduler |
-| GET | `/api/runs` | List recent runs across all jobs (paginated) |
-| GET | `/api/runs?job_name=X` | Filter runs by job name |
-| GET | `/api/runs/{id}` | Run detail with step results |
-| GET | `/api/logs/{job_name}` | List log files for a job |
-| GET | `/api/logs/{job_name}/{filename}` | Get log file contents (plain text) |
+| POST | `/api/auth/login` | Username/password login → JWT tokens |
+| POST | `/api/auth/refresh` | Refresh access token via refresh cookie/body |
+| POST | `/api/auth/logout` | Revoke refresh token, clear cookie |
+| GET | `/api/auth/me` | Current user info (requires auth) |
+
+### Job Endpoints
+
+| Method | Path | Role Required | Description |
+|--------|------|--------------|-------------|
+| GET | `/api/jobs` | viewer+ | List all jobs with next run time + last status |
+| GET | `/api/jobs/{name}` | viewer+ | Job detail + step list + recent runs |
+| POST | `/api/jobs/{name}/trigger` | operator+ | Trigger immediate manual run |
+| POST | `/api/config/reload` | admin | Hot-reload YAML configs into scheduler |
+
+### Run & Log Endpoints
+
+| Method | Path | Role Required | Description |
+|--------|------|--------------|-------------|
+| GET | `/api/runs` | viewer+ | List recent runs across all jobs (paginated) |
+| GET | `/api/runs?job_name=X` | viewer+ | Filter runs by job name |
+| GET | `/api/runs/{id}` | viewer+ | Run detail with step results |
+| GET | `/api/logs/{job_name}` | viewer+ | List log files for a job |
+| GET | `/api/logs/{job_name}/{filename}` | viewer+ | Get log file contents (plain text) |
+
+### API Key Endpoints
+
+| Method | Path | Role Required | Description |
+|--------|------|--------------|-------------|
+| GET | `/api/keys` | viewer+ | List current user's API keys (prefix only) |
+| POST | `/api/keys` | viewer+ | Generate new API key (returns full key once) |
+| DELETE | `/api/keys/{id}` | viewer+ | Revoke an API key (owner or admin) |
+
+### Admin Endpoints
+
+| Method | Path | Role Required | Description |
+|--------|------|--------------|-------------|
+| GET | `/api/admin/users` | admin | List all users |
+| POST | `/api/admin/users` | admin | Create new user |
+| PUT | `/api/admin/users/{id}` | admin | Update user role/status |
+| DELETE | `/api/admin/users/{id}` | admin | Deactivate user |
 
 ## MCP Server (FastMCP)
 
@@ -254,27 +337,51 @@ No create/update/delete job tools — config changes are made by editing YAML fi
 
 Reuses internal modules directly: `scheduler/loader.py`, `models/database.py`, `executor/runner.py`, `scheduler/engine.py`, `config.py`. Operates standalone (no dependency on FastAPI running).
 
+### MCP Authentication
+
+The MCP server authenticates via `CRONBOX_MCP_API_KEY`. At startup, the lifespan resolves this key against the `api_keys` table to determine the user and their role. Mutating tools (`trigger_job`, `reload_config`) enforce RBAC based on the resolved user's role. If no key is configured and no `jwt_secret` is set, the MCP server operates in dev mode (no auth).
+
 ## Frontend
 
-Single-page React app with three views:
+Single-page React app with auth-protected views. Dark theme (gray-950/900/800 backgrounds, gray-100 text).
+
+### Login (`/login`)
+- Full-page login form: username + password fields
+- On success, stores JWT access token in localStorage, redirects to dashboard
+- Refresh token handled via httpOnly cookie (transparent to frontend)
 
 ### Dashboard (`/`)
 - Table of all jobs: Name, Schedule (human-readable), Next Run, Last Status, Last Run Time, Actions (trigger button)
 - Status badges: green=success, red=failed, gray=never run, blue spinner=running
 - Auto-polls `GET /api/jobs` every 10 seconds
+- Trigger button visible only to operator+ roles
 
 ### Job Detail (`/jobs/:name`)
 - Header: job name, description, cron schedule
-- "Trigger Now" button → `POST /api/jobs/{name}/trigger`
+- "Trigger Now" button → `POST /api/jobs/{name}/trigger` (operator+ only)
 - Steps list: step name + command
 - Run history table (last 50): Status, Started, Duration, Trigger type
 - Each run row expands/links to show step results + log
+
+### Settings (`/settings`)
+- **Profile section**: username, email, role (read-only)
+- **API Keys section**: table of user's keys (prefix, name, expiration, last used), generate new key (returns full key once with copy-to-clipboard), revoke button per key
+
+### Admin Users (`/admin/users`) — admin only
+- Table of all users: username, email, role, active status, created date
+- Create new user, change role, deactivate/reactivate accounts
 
 ### Log Viewer (within job detail)
 - Fetches log content as plain text
 - Monospace, dark-themed scrollable container
 - Highlights `[STDOUT]`, `[STDERR]`, exit codes, failure markers
 - Auto-scrolls to bottom, "follow" toggle for in-progress runs (re-fetches every 3s)
+
+### Auth Integration
+- `AuthContext` manages user state, login/logout, token refresh
+- `ProtectedRoute` wrapper redirects to `/login` if unauthenticated
+- `api.ts` injects `Authorization: Bearer <token>` on all requests, auto-refreshes on 401
+- Layout header shows username, Settings link, Admin link (admin only), Logout button
 
 ## Configuration
 
@@ -287,9 +394,24 @@ All settings via environment variables prefixed with `CRONBOX_`:
 | `CRONBOX_DB_PATH` | `data/cronbox.db` | SQLite database path |
 | `CRONBOX_DISCORD_WEBHOOK_URL` | (empty) | Global Discord webhook URL |
 | `CRONBOX_WEB_BASE_URL` | (empty) | Base URL for links in notifications |
-| `CRONBOX_API_HOST` | `0.0.0.0` | API listen host |
+| `CRONBOX_API_KEY` | (empty) | Legacy shared API key (deprecated, use JWT) |
+| `CRONBOX_JWT_SECRET` | (empty) | JWT signing secret (required for multi-user auth) |
+| `CRONBOX_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | JWT access token lifetime |
+| `CRONBOX_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token lifetime |
+| `CRONBOX_API_KEY_DEFAULT_EXPIRE_DAYS` | `30` | Default API key expiration |
+| `CRONBOX_MCP_API_KEY` | (empty) | API key for MCP server authentication |
+| `CRONBOX_API_HOST` | `127.0.0.1` | API listen host |
 | `CRONBOX_API_PORT` | `8000` | API listen port |
 | `CRONBOX_LOG_RETENTION_DAYS` | `30` | Auto-delete logs older than this |
+
+### Auth Behavior by Configuration
+
+| `JWT_SECRET` | `API_KEY` | Behavior |
+|---|---|---|
+| empty | empty | No auth required (local dev mode) |
+| empty | set | Legacy single shared key (backwards compat) |
+| set | empty | Full multi-user JWT + per-user API keys |
+| set | set | Multi-user auth + legacy key also accepted |
 
 ## Deployment
 
@@ -307,6 +429,7 @@ services:
       - ./data:/app/data                            # Persist SQLite
       - ./config:/app/config:ro                     # Job configs (editable without rebuild)
     environment:
+      - CRONBOX_JWT_SECRET=${JWT_SECRET}
       - CRONBOX_DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - CRONBOX_WEB_BASE_URL=${WEB_BASE_URL:-http://localhost:8000}
     restart: unless-stopped
@@ -316,10 +439,23 @@ services:
 
 ```bash
 pip install -e .
-uvicorn cronbox.main:app --host 0.0.0.0 --port 8000
+cronbox create-user --username admin --email admin@example.com --role admin
+CRONBOX_JWT_SECRET=your-secret-here cronbox serve
+```
+
+Or with uvicorn directly:
+```bash
+CRONBOX_JWT_SECRET=your-secret-here uvicorn cronbox.main:app --host 127.0.0.1 --port 8000
 ```
 
 Both modes work — Docker SDK uses `/var/run/docker.sock` either directly on host or via socket mount.
+
+### CLI Commands
+
+```bash
+cronbox create-user --username NAME --email EMAIL --role admin|operator|viewer
+cronbox serve [--host HOST] [--port PORT]
+```
 
 ## Build Phases
 
@@ -390,7 +526,13 @@ dependencies = [
     "httpx>=0.27",
     "pydantic-settings>=2.0",
     "fastmcp>=2.0",
+    "passlib[bcrypt]>=1.7",
+    "pyjwt>=2.8",
+    "python-multipart>=0.0.9",
 ]
+
+[project.scripts]
+cronbox = "cronbox.cli:main"
 ```
 
 ## Frontend Dependencies
