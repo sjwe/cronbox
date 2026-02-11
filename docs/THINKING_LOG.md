@@ -246,6 +246,24 @@ Rationale:
 - `cronbox://jobs/{name}` — single job config as YAML
 - `cronbox://status` — system status (uptime, job counts, recent failures)
 
+### MCP Access Level: Read + Trigger Only (No Config Mutation)
+
+**Question**: Should LLMs be able to create/update/delete job configs through MCP?
+
+**Options considered:**
+- Read + trigger only — MCP queries status and triggers runs, config changes require editing YAML files
+- Full CRUD — MCP writes YAML files on disk, reloads scheduler
+- Full CRUD + git auto-commit — same but with audit trail
+
+**Choice: Read + trigger only**
+
+Rationale:
+- YAML files stay the single source of truth — no risk of LLM accidentally breaking schedules
+- Config changes are deliberate, reviewable actions (edit a file, commit to git)
+- Claude Code can still edit YAML files directly when asked — the MCP server just doesn't expose that as a tool
+- Keeps the MCP attack surface minimal: worst case an LLM can trigger a job to run early, not rewrite its definition
+- `reload_config` tool is the bridge: after a human (or Claude Code) edits YAML, an LLM can reload the scheduler
+
 ---
 
 ## Open Questions / Future Considerations

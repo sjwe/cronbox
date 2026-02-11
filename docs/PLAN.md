@@ -46,6 +46,10 @@ cronbox/
 │   ├── notifications/
 │   │   ├── __init__.py
 │   │   └── discord.py               # Discord webhook on failure
+│   ├── mcp/
+│   │   ├── __init__.py
+│   │   ├── server.py                # FastMCP server: tools + resources
+│   │   └── __main__.py              # `python -m cronbox.mcp` entrypoint
 │   └── api/
 │       ├── __init__.py
 │       ├── routes_jobs.py           # /api/jobs — list, detail, trigger, reload
@@ -212,6 +216,44 @@ All routes prefixed with `/api`. Frontend served at `/` as static files.
 | GET | `/api/logs/{job_name}` | List log files for a job |
 | GET | `/api/logs/{job_name}/{filename}` | Get log file contents (plain text) |
 
+## MCP Server (FastMCP)
+
+Exposes cronbox status and control to LLMs via MCP. Read-only for configs, plus job triggering. No config mutation — YAML files remain the sole source of truth, edited by humans.
+
+### Transports
+
+- **STDIO** (default): `python -m cronbox.mcp` — for Claude Desktop / Claude Code
+- **HTTP**: `python -m cronbox.mcp --transport http --port 9100` — for remote LLM access
+
+### Tools (read + trigger only)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_jobs` | — | All jobs with schedule, next run, last status |
+| `get_job` | `job_name: str` | Job config + last 10 runs |
+| `trigger_job` | `job_name: str` | Trigger immediate manual run, returns run_id |
+| `list_runs` | `job_name?: str, limit: int = 20` | Recent runs, optionally filtered |
+| `get_run` | `run_id: int` | Run detail with per-step results |
+| `get_log` | `job_name: str, run_id?: int` | Log content (latest if run_id omitted) |
+| `reload_config` | — | Hot-reload YAML configs |
+
+No create/update/delete job tools — config changes are made by editing YAML files directly.
+
+### Resources
+
+| URI | Description |
+|-----|-------------|
+| `cronbox://jobs` | All job configs as JSON |
+| `cronbox://jobs/{name}` | Single job config as YAML |
+| `cronbox://status` | System status: uptime, total jobs, running, recent failures |
+
+### Files
+
+- `src/cronbox/mcp/server.py` — FastMCP server with `@mcp.tool` and `@mcp.resource` decorators
+- `src/cronbox/mcp/__main__.py` — CLI entrypoint with `--transport` and `--port` args
+
+Reuses internal modules directly: `scheduler/loader.py`, `models/database.py`, `executor/runner.py`, `scheduler/engine.py`, `config.py`. Operates standalone (no dependency on FastAPI running).
+
 ## Frontend
 
 Single-page React app with three views:
@@ -287,9 +329,11 @@ Both modes work — Docker SDK uses `/var/run/docker.sock` either directly on ho
 
 3. **Phase 3 — Notifications**: discord.py, wire into runner failure path. **Test**: deliberately fail a job, verify Discord embed appears.
 
-4. **Phase 4 — Frontend**: Scaffold Vite + React + TS + Tailwind, build components (JobList, JobDetail, LogViewer), wire up TanStack Query polling. **Test**: full end-to-end in browser.
+4. **Phase 4 — MCP server**: mcp/server.py (FastMCP tools + resources), mcp/__main__.py (CLI entrypoint). **Test**: `python -m cronbox.mcp` via STDIO, `--transport http --port 9100` via HTTP.
 
-5. **Phase 5 — Deployment + polish**: Dockerfile, docker-compose.yml, log retention cleanup task, config reload endpoint.
+5. **Phase 5 — Frontend**: Scaffold Vite + React + TS + Tailwind, build components (JobList, JobDetail, LogViewer), wire up TanStack Query polling. **Test**: full end-to-end in browser.
+
+6. **Phase 6 — Deployment + polish**: Dockerfile, docker-compose.yml, log retention cleanup task, config reload endpoint.
 
 ## Verification Plan
 
@@ -298,7 +342,9 @@ Both modes work — Docker SDK uses `/var/run/docker.sock` either directly on ho
 3. Trigger manually: `POST /api/jobs/polygon_sync/trigger` → check Docker container executes, log file appears in `logs/polygon_sync/`, run recorded in `GET /api/runs`
 4. Verify failure handling: create a job with a deliberately bad command, trigger it, confirm it's marked failed and Discord notification fires
 5. Frontend: open `http://localhost:8000`, confirm dashboard shows jobs, drill into job detail, view logs
-6. Docker deployment: `docker compose up`, verify identical behavior
+6. MCP STDIO: `python -m cronbox.mcp`, call `list_jobs` tool via Claude Desktop or fastmcp client
+7. MCP HTTP: `python -m cronbox.mcp --transport http --port 9100`, verify tools at `http://localhost:9100`
+8. Docker deployment: `docker compose up`, verify identical behavior
 
 ## Python Dependencies
 
@@ -317,5 +363,6 @@ dependencies = [
     "pyyaml>=6.0",
     "httpx>=0.27",
     "pydantic-settings>=2.0",
+    "fastmcp>=2.0",
 ]
 ```

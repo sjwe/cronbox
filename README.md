@@ -120,7 +120,7 @@ All settings are configurable via environment variables prefixed with `CRONBOX_`
 
 ## MCP Server
 
-cronbox includes an MCP (Model Context Protocol) server so LLMs can query job status and trigger runs programmatically.
+cronbox includes an MCP (Model Context Protocol) server so LLMs can query job status and trigger runs programmatically. The MCP server is read-only for configs — job definitions can only be changed by editing YAML files directly.
 
 ### STDIO (Claude Desktop / Claude Code)
 
