@@ -11,6 +11,8 @@ from sqlalchemy.orm import selectinload
 
 from cronbox.config import Settings
 from cronbox.executor.runner import execute_job
+import cronbox.models.auth as auth_models  # noqa: F401 — register auth tables
+from cronbox.models.auth import APIKey, User, UserRole
 from cronbox.models.database import JobRun, get_engine, get_session_factory, init_db
 from cronbox.models.job_config import JobConfig
 from cronbox.models.queries import get_latest_runs
@@ -25,17 +27,37 @@ _settings: Settings | None = None
 _session_factory = None
 _engine: SchedulerEngine | None = None
 _startup_time: datetime | None = None
+_mcp_user: User | None = None
 
 
 @asynccontextmanager
 async def app_lifespan(server):
-    global _settings, _session_factory, _engine, _startup_time
+    global _settings, _session_factory, _engine, _startup_time, _mcp_user
 
     _settings = Settings()
     _startup_time = datetime.now(timezone.utc)
 
     await init_db(_settings.db_path)
     _session_factory = get_session_factory(_settings.db_path)
+
+    # Resolve MCP user from mcp_api_key if configured
+    if _settings.mcp_api_key:
+        import hashlib
+
+        key_hash = hashlib.sha256(_settings.mcp_api_key.encode()).hexdigest()
+        async with _session_factory() as session:
+            result = await session.execute(
+                select(APIKey).where(
+                    APIKey.key_hash == key_hash,
+                    APIKey.is_active.is_(True),
+                )
+            )
+            db_key = result.scalar_one_or_none()
+            if db_key:
+                user_result = await session.execute(
+                    select(User).where(User.id == db_key.user_id)
+                )
+                _mcp_user = user_result.scalar_one_or_none()
 
     _engine = SchedulerEngine()
     configs = load_jobs(_settings.jobs_config_dir)
@@ -152,9 +174,24 @@ async def get_job(job_name: str) -> str:
     )
 
 
+def _check_mcp_permission(*allowed_roles: UserRole) -> str | None:
+    """Check if MCP user has required role. Returns error message or None."""
+    if not _settings.jwt_secret and not _settings.mcp_api_key:
+        return None  # Dev mode, no checks
+    if _mcp_user is None:
+        return "MCP user not authenticated"
+    if _mcp_user.role not in allowed_roles:
+        return f"Insufficient permissions (need {[r.value for r in allowed_roles]})"
+    return None
+
+
 @mcp.tool
 async def trigger_job(job_name: str) -> str:
     """Trigger an immediate manual run of a job. Returns the run_id."""
+    err = _check_mcp_permission(UserRole.admin, UserRole.operator)
+    if err:
+        return json.dumps({"error": err})
+
     config = _engine.get_config(job_name)
     if not config:
         return json.dumps({"error": f"Job '{job_name}' not found"})
@@ -306,6 +343,10 @@ async def get_log(job_name: str, run_id: int | None = None) -> str:
 @mcp.tool
 async def reload_config() -> str:
     """Hot-reload YAML job configs into the scheduler."""
+    err = _check_mcp_permission(UserRole.admin)
+    if err:
+        return json.dumps({"error": err})
+
     configs = load_jobs(_settings.jobs_config_dir)
 
     async def _execute_job_wrapper(job_config: JobConfig):

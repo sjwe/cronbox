@@ -42,3 +42,33 @@ export interface RunDetail extends RunSummary {
   steps: StepResult[];
   log_file: string | null;
 }
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  email: string;
+  role: "admin" | "operator" | "viewer";
+}
+
+export interface APIKeyItem {
+  id: number;
+  key_prefix: string;
+  name: string;
+  expires_at: string;
+  created_at: string;
+  last_used_at: string | null;
+  is_active: boolean;
+}
+
+export interface APIKeyCreated extends APIKeyItem {
+  key: string;
+}
+
+export interface UserItem {
+  id: number;
+  username: string;
+  email: string;
+  role: "admin" | "operator" | "viewer";
+  is_active: boolean;
+  created_at: string;
+}

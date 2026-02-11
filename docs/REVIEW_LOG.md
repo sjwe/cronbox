@@ -201,3 +201,4 @@ Placeholder test files exist for these modules — can be filled incrementally:
 | [#8](https://github.com/sjwe/cronbox/issues/8) | Virtualize LogViewer for large logs | Medium | Open |
 | [#9](https://github.com/sjwe/cronbox/issues/9) | Stop leaking filesystem paths in API responses | Medium | **Closed** |
 | [#10](https://github.com/sjwe/cronbox/issues/10) | Pin APScheduler to a tested version | Medium | Open |
+| [#11](https://github.com/sjwe/cronbox/issues/11) | Add multi-user auth: JWT, per-user API keys, RBAC | High | **Closed** |

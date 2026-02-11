@@ -451,7 +451,7 @@ Fixed the remaining high-priority issue and two medium issues. 69 tests pass (wa
 
 ---
 
-## 2026-02-11 — Authentication System Design
+## 2026-02-11 — Authentication System Design & Implementation
 
 ### Problem
 
@@ -475,7 +475,7 @@ The single shared API key (`CRONBOX_API_KEY`) is insufficient for multi-user dep
 - API keys are ideal for scripts/MCP: long-lived, simple header inclusion, no login flow needed
 - Both resolve to the same User object and go through the same RBAC checks
 
-**Password hashing:** bcrypt via `passlib`. Industry standard, slow-by-design for brute-force resistance.
+**Password hashing:** bcrypt directly (not passlib — passlib 1.7.4 is incompatible with bcrypt 5.x). Industry standard, slow-by-design for brute-force resistance.
 
 **API key hashing:** SHA-256. Fast verification is fine here since keys are high-entropy random tokens (not passwords). Prefixed with `cb_` for easy identification.
 
@@ -543,11 +543,35 @@ This means existing deployments continue working unchanged. Users migrate at the
 - `src/cronbox/config.py` — jwt_secret, token expiry, mcp_api_key settings
 - `src/cronbox/api/auth.py` — rewrite verify_api_key → get_current_user (JWT + API key + legacy)
 - `src/cronbox/main.py` — wire new routers, import auth models, RBAC deps
+- `src/cronbox/api/routes_jobs.py` — require_operator on trigger, require_admin on reload
+- `src/cronbox/models/api_models.py` — auth-related Pydantic models
 - `src/cronbox/mcp/server.py` — API key auth + permission checks on mutating tools
 - `frontend/src/api.ts` — auth headers, 401 handling, new API functions
 - `frontend/src/App.tsx` — new routes, ProtectedRoute wrapper
+- `frontend/src/main.tsx` — AuthProvider wrapper
 - `frontend/src/components/Layout.tsx` — nav links, user info, logout
-- `pyproject.toml` — new deps (passlib, pyjwt, python-multipart) + CLI entry point
+- `frontend/src/types.ts` — AuthUser, APIKeyItem, UserItem types
+- `pyproject.toml` — new deps (bcrypt, pyjwt, python-multipart) + CLI entry point
+- `tests/conftest.py` — auth-enabled fixtures
+
+**Tests added (31 new, 120 total):**
+- `tests/models/test_auth.py` (4) — password hashing, API key generation
+- `tests/api/test_routes_auth.py` (7) — login, refresh, logout, me
+- `tests/api/test_routes_keys.py` (6) — create, list, revoke, auth with key, expired/revoked
+- `tests/api/test_rbac.py` (6) — viewer/operator/admin permission boundaries
+- `tests/test_cli.py` (2) — create-user success + duplicate
+- `frontend/src/components/__tests__/Login.test.tsx` (3) — renders, error, success redirect
+- `frontend/src/components/__tests__/Settings.test.tsx` (3) — profile, key list, key creation
+
+### Implementation Notes
+
+**bcrypt directly instead of passlib:** passlib 1.7.4 has a known incompatibility with bcrypt 5.x (deprecated `__about__` module). Used `bcrypt` package directly for `hash_password()` and `verify_password()`.
+
+**_SyntheticUser for dev/legacy mode:** The `get_current_user` dependency needs to return a User-like object even when no real users exist (dev mode, legacy API key). A simple `_SyntheticUser` class avoids SQLAlchemy ORM instrumentation issues that would occur with `User.__new__(User)`.
+
+**Refresh token rotation:** The refresh endpoint issues a new refresh token and revokes the old one on each use. This limits the window if a refresh token is compromised.
+
+**All 69 existing backend tests unchanged:** The dev mode path (empty jwt_secret + empty api_key → synthetic admin) ensures complete backwards compatibility. No existing test fixtures were modified.
 
 ---
 

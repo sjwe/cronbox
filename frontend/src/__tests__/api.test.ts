@@ -2,10 +2,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fetchJobs, triggerJob, fetchRuns, fetchLogContent } from "../api";
 
 const mockFetch = vi.fn();
+const store: Record<string, string> = {};
+const mockStorage = {
+  getItem: vi.fn((key: string) => store[key] ?? null),
+  setItem: vi.fn((key: string, val: string) => { store[key] = val; }),
+  removeItem: vi.fn((key: string) => { delete store[key]; }),
+  clear: vi.fn(() => { for (const k in store) delete store[k]; }),
+  get length() { return Object.keys(store).length; },
+  key: vi.fn((i: number) => Object.keys(store)[i] ?? null),
+};
 
 beforeEach(() => {
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
+  vi.stubGlobal("localStorage", mockStorage);
+  mockStorage.removeItem("cronbox_token");
 });
 
 afterEach(() => {
@@ -17,11 +28,12 @@ describe("fetchJobs", () => {
     const jobs = [{ name: "test-job" }];
     mockFetch.mockResolvedValueOnce({
       ok: true,
+      status: 200,
       json: () => Promise.resolve(jobs),
     });
 
     const result = await fetchJobs();
-    expect(mockFetch).toHaveBeenCalledWith("/api/jobs");
+    expect(mockFetch).toHaveBeenCalledWith("/api/jobs", expect.objectContaining({ headers: {} }));
     expect(result).toEqual(jobs);
   });
 });
@@ -45,6 +57,7 @@ describe("triggerJob", () => {
     await triggerJob("my-job");
     expect(mockFetch).toHaveBeenCalledWith("/api/jobs/my-job/trigger", {
       method: "POST",
+      headers: {},
     });
   });
 });
@@ -53,6 +66,7 @@ describe("fetchRuns", () => {
   it("builds query string with job_name and per_page", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
+      status: 200,
       json: () => Promise.resolve({ runs: [] }),
     });
 
@@ -65,11 +79,12 @@ describe("fetchRuns", () => {
   it("calls /api/runs with no query string when no params", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
+      status: 200,
       json: () => Promise.resolve({ runs: [] }),
     });
 
     await fetchRuns();
-    expect(mockFetch).toHaveBeenCalledWith("/api/runs");
+    expect(mockFetch).toHaveBeenCalledWith("/api/runs", expect.objectContaining({ headers: {} }));
   });
 });
 

@@ -5,12 +5,17 @@ from pathlib import Path
 from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from cronbox.api.auth import verify_api_key
+from cronbox.api.auth import get_current_user
+from cronbox.api.permissions import require_admin, require_operator
+from cronbox.api.routes_auth import router as auth_router
 from cronbox.api.routes_jobs import router as jobs_router
+from cronbox.api.routes_keys import router as keys_router
 from cronbox.api.routes_logs import router as logs_router
 from cronbox.api.routes_runs import router as runs_router
+from cronbox.api.routes_users import router as users_router
 from cronbox.config import Settings
 from cronbox.executor.runner import execute_job
+import cronbox.models.auth  # noqa: F401 — register auth tables
 from cronbox.models.database import get_engine, get_session_factory, init_db
 from cronbox.scheduler.engine import SchedulerEngine
 from cronbox.scheduler.loader import load_jobs
@@ -56,9 +61,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="cronbox", version="0.1.0", lifespan=lifespan)
-app.include_router(jobs_router, dependencies=[Depends(verify_api_key)])
-app.include_router(runs_router, dependencies=[Depends(verify_api_key)])
-app.include_router(logs_router, dependencies=[Depends(verify_api_key)])
+app.include_router(auth_router)
+app.include_router(jobs_router, dependencies=[Depends(get_current_user)])
+app.include_router(runs_router, dependencies=[Depends(get_current_user)])
+app.include_router(logs_router, dependencies=[Depends(get_current_user)])
+app.include_router(keys_router, dependencies=[Depends(get_current_user)])
+app.include_router(users_router, dependencies=[Depends(get_current_user)])
 
 # Mount frontend static files if the dist directory exists
 frontend_dist = Path("frontend/dist")

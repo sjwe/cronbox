@@ -1,8 +1,9 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from cronbox.api.permissions import require_admin, require_operator
 from cronbox.executor.runner import execute_job
 from cronbox.models.api_models import (
     ContainerInfo,
@@ -139,7 +140,7 @@ async def get_job(name: str, request: Request):
     )
 
 
-@router.post("/jobs/{name}/trigger", response_model=TriggerResponse)
+@router.post("/jobs/{name}/trigger", response_model=TriggerResponse, dependencies=[Depends(require_operator)])
 async def trigger_job(name: str, request: Request):
     engine = request.app.state.scheduler_engine
     config = engine.get_config(name)
@@ -165,7 +166,7 @@ async def trigger_job(name: str, request: Request):
     return TriggerResponse(message="Job triggered", job_name=name)
 
 
-@router.post("/config/reload", response_model=ReloadResponse)
+@router.post("/config/reload", response_model=ReloadResponse, dependencies=[Depends(require_admin)])
 async def reload_config(request: Request):
     settings = request.app.state.settings
     engine = request.app.state.scheduler_engine

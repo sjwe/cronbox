@@ -473,14 +473,18 @@ All phases completed 2026-02-11.
 
 6. **Phase 6 — Deployment** ✅: Multi-stage Dockerfile, docker-compose.yml, .gitignore.
 
+7. **Phase 7 — Authentication & Authorization** ✅: Multi-user JWT auth, per-user API keys, 3-role RBAC (admin/operator/viewer). Frontend login page, settings page with API key management, admin user management. CLI bootstrap. 120 tests (94 backend + 26 frontend).
+
 ## Verification Plan
 
 1. Start scheduler: `uvicorn cronbox.main:app`
 2. Verify YAML loading: `GET /api/jobs` returns all 3 jobs with correct schedules
 3. Trigger manually: `POST /api/jobs/polygon_sync/trigger` → check Docker container executes, log file appears in `logs/polygon_sync/`, run recorded in `GET /api/runs`
 4. Verify failure handling: create a job with a deliberately bad command, trigger it, confirm it's marked failed and Discord notification fires
-5. Frontend: open `http://localhost:8000`, confirm dashboard shows jobs, drill into job detail, view logs
-6. MCP STDIO: `python -m cronbox.mcp`, call `list_jobs` tool via Claude Desktop or fastmcp client
+5. Frontend: open `http://localhost:8000`, redirected to `/login`, log in with admin credentials, confirm dashboard shows jobs, drill into job detail, view logs
+6. Auth: verify viewer can read but not trigger, operator can trigger, admin can reload config and manage users
+7. API keys: generate key in Settings page, use it via `curl -H "X-API-Key: cb_..."`, verify expiration
+8. MCP STDIO: `python -m cronbox.mcp`, call `list_jobs` tool via Claude Desktop or fastmcp client
 7. MCP HTTP: `python -m cronbox.mcp --transport http --port 9100`, verify tools at `http://localhost:9100`
 8. Docker deployment: `docker compose up`, verify identical behavior
 

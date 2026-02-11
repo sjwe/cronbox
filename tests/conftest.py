@@ -1,11 +1,15 @@
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import cronbox.models.auth  # noqa: F401 — register auth tables
 import cronbox.models.database as db_module
 from cronbox.config import Settings
+from cronbox.models.auth import User, UserRole, hash_password
 from cronbox.models.database import Base
 from cronbox.models.job_config import (
     ContainerConfig,
@@ -122,3 +126,138 @@ def sample_job_config():
         ],
         timeout_seconds=60,
     )
+
+
+# --- Auth fixtures ---
+
+
+@pytest.fixture
+def auth_settings(tmp_path):
+    """Settings with JWT secret configured (auth enabled)."""
+    return Settings(
+        db_path=":memory:",
+        jobs_config_dir=str(tmp_path / "jobs"),
+        logs_dir=str(tmp_path / "logs"),
+        discord_webhook_url="",
+        web_base_url="",
+        jwt_secret="test-secret-key",
+    )
+
+
+@pytest.fixture
+async def admin_user(db_engine, db_session_factory):
+    """Create an admin user in the DB."""
+    async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with db_session_factory() as session:
+        user = User(
+            username="admin",
+            email="admin@test.com",
+            password_hash=hash_password("admin-pass"),
+            role=UserRole.admin,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+@pytest.fixture
+async def operator_user(db_engine, db_session_factory):
+    """Create an operator user in the DB."""
+    async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with db_session_factory() as session:
+        user = User(
+            username="operator",
+            email="operator@test.com",
+            password_hash=hash_password("operator-pass"),
+            role=UserRole.operator,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+@pytest.fixture
+async def viewer_user(db_engine, db_session_factory):
+    """Create a viewer user in the DB."""
+    async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with db_session_factory() as session:
+        user = User(
+            username="viewer",
+            email="viewer@test.com",
+            password_hash=hash_password("viewer-pass"),
+            role=UserRole.viewer,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+def _make_token(user: User, secret: str = "test-secret-key") -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user.id),
+        "username": user.username,
+        "role": user.role.value,
+        "exp": now + timedelta(minutes=15),
+        "iat": now,
+        "type": "access",
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+@pytest.fixture
+def admin_token(admin_user):
+    return _make_token(admin_user)
+
+
+@pytest.fixture
+def operator_token(operator_user):
+    return _make_token(operator_user)
+
+
+@pytest.fixture
+def viewer_token(viewer_user):
+    return _make_token(viewer_user)
+
+
+@pytest.fixture
+async def auth_async_client(db_engine, db_session_factory, auth_settings):
+    """httpx AsyncClient with auth enabled (jwt_secret configured)."""
+    original_engine = db_module._engine
+    original_factory = db_module._session_factory
+    db_module._engine = db_engine
+    db_module._session_factory = db_session_factory
+
+    async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    from cronbox.main import app
+
+    app.state.settings = auth_settings
+    app.state.session_factory = db_session_factory
+
+    mock_engine = MagicMock()
+    mock_engine.get_all_configs.return_value = []
+    mock_engine.get_config.return_value = None
+    mock_engine.get_next_run_time = AsyncMock(return_value=None)
+    mock_engine.get_all_next_run_times = AsyncMock(return_value={})
+    app.state.scheduler_engine = mock_engine
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+    async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+    db_module._engine = original_engine
+    db_module._session_factory = original_factory

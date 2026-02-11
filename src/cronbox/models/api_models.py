@@ -84,3 +84,66 @@ class PaginatedRuns(BaseModel):
     total: int
     page: int
     per_page: int
+
+
+# --- Auth models ---
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+    role: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
+    refresh_token: str
+    user: UserResponse
+
+
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class CreateAPIKeyRequest(BaseModel):
+    name: str
+    expires_in_days: int | None = 30
+
+
+class APIKeyResponse(BaseModel):
+    id: int
+    key: str
+    key_prefix: str
+    name: str
+    expires_at: datetime | None = None
+    created_at: datetime
+
+
+class APIKeyListItem(BaseModel):
+    id: int
+    key_prefix: str
+    name: str
+    expires_at: datetime | None = None
+    created_at: datetime
+    last_used_at: datetime | None = None
+    is_active: bool
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+    role: str = "viewer"
+
+
+class UpdateUserRequest(BaseModel):
+    role: str | None = None
+    is_active: bool | None = None
