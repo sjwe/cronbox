@@ -7,7 +7,7 @@ interface Props {
   logFile: string;
 }
 
-function highlightLine(line: string): ReactNode {
+export function highlightLine(line: string): ReactNode {
   if (line.includes("[STDERR]")) {
     return <span className="text-red-400">{line}</span>;
   }

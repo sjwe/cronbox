@@ -5,7 +5,7 @@ import StatusBadge from "./StatusBadge";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function parseCronSchedule(cron: string, timezone: string): string {
+export function parseCronSchedule(cron: string, timezone: string): string {
   const parts = cron.split(/\s+/);
   if (parts.length !== 5) return cron;
   const [minute, hour, , , dow] = parts;
@@ -42,7 +42,7 @@ function parseCronSchedule(cron: string, timezone: string): string {
   return `${dayStr}${displayHour}${displayMin} ${period} ${tz}`;
 }
 
-function relativeTime(iso: string): string {
+export function relativeTime(iso: string): string {
   const now = Date.now();
   const target = new Date(iso).getTime();
   const diff = target - now;
