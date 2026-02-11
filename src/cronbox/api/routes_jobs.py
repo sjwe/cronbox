@@ -15,6 +15,7 @@ from cronbox.models.api_models import (
     TriggerResponse,
 )
 from cronbox.models.database import JobRun
+from cronbox.models.queries import get_latest_runs
 from cronbox.scheduler.loader import load_jobs
 
 from sqlalchemy import select
@@ -28,18 +29,15 @@ async def list_jobs(request: Request):
     configs = engine.get_all_configs()
     session_factory = request.app.state.session_factory
 
+    next_run_times = await engine.get_all_next_run_times()
+
+    async with session_factory() as session:
+        latest_runs = await get_latest_runs(session)
+
     summaries = []
     for config in configs:
-        next_run = await engine.get_next_run_time(config.name)
-
-        async with session_factory() as session:
-            result = await session.execute(
-                select(JobRun)
-                .where(JobRun.job_name == config.name)
-                .order_by(JobRun.started_at.desc())
-                .limit(1)
-            )
-            last_run_row = result.scalar_one_or_none()
+        next_run = next_run_times.get(config.name)
+        last_run_row = latest_runs.get(config.name)
 
         last_run = None
         if last_run_row:

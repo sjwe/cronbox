@@ -93,6 +93,7 @@ async def async_client(db_engine, db_session_factory, settings):
     mock_engine.get_all_configs.return_value = []
     mock_engine.get_config.return_value = None
     mock_engine.get_next_run_time = AsyncMock(return_value=None)
+    mock_engine.get_all_next_run_times = AsyncMock(return_value={})
     app.state.scheduler_engine = mock_engine
 
     transport = ASGITransport(app=app)

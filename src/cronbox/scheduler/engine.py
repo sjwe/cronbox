@@ -49,8 +49,12 @@ class SchedulerEngine:
         return list(self._configs.values())
 
     async def get_next_run_time(self, job_name: str) -> datetime | None:
+        try:
+            schedule = await self.scheduler.get_schedule(job_name)
+            return schedule.next_fire_time if schedule else None
+        except Exception:
+            return None
+
+    async def get_all_next_run_times(self) -> dict[str, datetime | None]:
         schedules = await self.scheduler.get_schedules()
-        for schedule in schedules:
-            if schedule.id == job_name:
-                return schedule.next_fire_time
-        return None
+        return {s.id: s.next_fire_time for s in schedules}

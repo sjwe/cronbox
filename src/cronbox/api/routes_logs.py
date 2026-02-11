@@ -5,14 +5,21 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from cronbox.models.api_models import LogFileEntry
+from cronbox.utils import read_log_tail
 
 router = APIRouter(prefix="/api")
 
 
 @router.get("/logs/{job_name}", response_model=list[LogFileEntry])
-async def list_logs(job_name: str, request: Request):
+async def list_logs(job_name: str, request: Request, limit: int = 100):
     settings = request.app.state.settings
     log_dir = Path(settings.logs_dir) / job_name
+
+    # Prevent path traversal
+    resolved = log_dir.resolve()
+    base = Path(settings.logs_dir).resolve()
+    if not str(resolved).startswith(str(base)):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if not log_dir.exists():
         return []
@@ -29,7 +36,7 @@ async def list_logs(job_name: str, request: Request):
                 )
             )
 
-    return entries
+    return entries[:limit]
 
 
 @router.get("/logs/{job_name}/{filename}")
@@ -46,5 +53,5 @@ async def get_log(job_name: str, filename: str, request: Request):
     if not str(resolved).startswith(str(base)):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    content = log_path.read_text(errors="replace")
+    content = read_log_tail(log_path)
     return PlainTextResponse(content)

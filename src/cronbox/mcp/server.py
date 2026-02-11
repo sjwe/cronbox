@@ -13,8 +13,10 @@ from cronbox.config import Settings
 from cronbox.executor.runner import execute_job
 from cronbox.models.database import JobRun, get_engine, get_session_factory, init_db
 from cronbox.models.job_config import JobConfig
+from cronbox.models.queries import get_latest_runs
 from cronbox.scheduler.engine import SchedulerEngine
 from cronbox.scheduler.loader import load_jobs
+from cronbox.utils import read_log_tail
 
 logger = logging.getLogger(__name__)
 
@@ -67,19 +69,16 @@ mcp = FastMCP(name="cronbox", lifespan=app_lifespan)
 async def list_jobs() -> str:
     """List all jobs with schedule, next run time, and last status."""
     configs = _engine.get_all_configs()
+
+    next_run_times = await _engine.get_all_next_run_times()
+
+    async with _session_factory() as session:
+        latest_runs = await get_latest_runs(session)
+
     results = []
-
     for config in configs:
-        next_run = await _engine.get_next_run_time(config.name)
-
-        async with _session_factory() as session:
-            result = await session.execute(
-                select(JobRun)
-                .where(JobRun.job_name == config.name)
-                .order_by(JobRun.started_at.desc())
-                .limit(1)
-            )
-            last_run = result.scalar_one_or_none()
+        next_run = next_run_times.get(config.name)
+        last_run = latest_runs.get(config.name)
 
         results.append(
             {
@@ -259,8 +258,18 @@ async def get_log(job_name: str, run_id: int | None = None) -> str:
             return json.dumps({"error": f"No log found for run {run_id}"})
 
         log_path = Path(run.log_file)
+        # Prevent path traversal from DB-stored paths
+        resolved = log_path.resolve()
+        base = Path(_settings.logs_dir).resolve()
+        if not str(resolved).startswith(str(base)):
+            return json.dumps({"error": "Access denied"})
     else:
         log_dir = Path(_settings.logs_dir) / job_name
+        # Prevent path traversal from user input
+        resolved_dir = log_dir.resolve()
+        base = Path(_settings.logs_dir).resolve()
+        if not str(resolved_dir).startswith(str(base)):
+            return json.dumps({"error": "Access denied"})
         if not log_dir.exists():
             return json.dumps(
                 {"error": f"No logs found for job '{job_name}'"}
@@ -279,9 +288,9 @@ async def get_log(job_name: str, run_id: int | None = None) -> str:
         log_path = log_files[0]
 
     if not log_path.exists():
-        return json.dumps({"error": f"Log file not found: {log_path}"})
+        return json.dumps({"error": "Log file not found"})
 
-    content = log_path.read_text(errors="replace")
+    content = read_log_tail(log_path)
     return content
 
 
