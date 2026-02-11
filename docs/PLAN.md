@@ -6,7 +6,7 @@ Replace ad-hoc crontab + shell scripts with a proper job scheduler that runs all
 
 ## Stack
 
-- **Backend**: Python 3.12+ — FastAPI (API + static file serving), APScheduler 4.x (scheduling), Docker SDK (container ops), SQLAlchemy + aiosqlite (run history + user/auth data), httpx (Discord webhooks), PyJWT (authentication tokens), passlib[bcrypt] (password hashing)
+- **Backend**: Python 3.12+ — FastAPI (API + static file serving), APScheduler 4.x (scheduling), Docker SDK (container ops), SQLAlchemy + aiosqlite (run history + user/auth data), httpx (Discord webhooks), PyJWT (authentication tokens), bcrypt (password hashing)
 - **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS v4 + TanStack Query
 - **Config**: YAML files in `config/jobs/` (one per job)
 - **Storage**: SQLite for run metadata + users + API keys, disk files for logs
@@ -485,8 +485,8 @@ All phases completed 2026-02-11.
 6. Auth: verify viewer can read but not trigger, operator can trigger, admin can reload config and manage users
 7. API keys: generate key in Settings page, use it via `curl -H "X-API-Key: cb_..."`, verify expiration
 8. MCP STDIO: `python -m cronbox.mcp`, call `list_jobs` tool via Claude Desktop or fastmcp client
-7. MCP HTTP: `python -m cronbox.mcp --transport http --port 9100`, verify tools at `http://localhost:9100`
-8. Docker deployment: `docker compose up`, verify identical behavior
+9. MCP HTTP: `python -m cronbox.mcp --transport http --port 9100`, verify tools at `http://localhost:9100`
+10. Docker deployment: `docker compose up`, verify identical behavior
 
 ## Implementation Notes
 
@@ -530,7 +530,7 @@ dependencies = [
     "httpx>=0.27",
     "pydantic-settings>=2.0",
     "fastmcp>=2.0",
-    "passlib[bcrypt]>=1.7",
+    "bcrypt>=4.0",
     "pyjwt>=2.8",
     "python-multipart>=0.0.9",
 ]
