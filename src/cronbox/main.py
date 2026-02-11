@@ -25,6 +25,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+async def _execute_job_wrapper(job_config, *, session_factory, settings, docker_ops):
+    async with session_factory() as session:
+        await execute_job(
+            job_config,
+            "scheduled",
+            db_session=session,
+            settings=settings,
+            docker_ops=docker_ops,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings()
@@ -46,18 +57,16 @@ async def lifespan(app: FastAPI):
     engine = SchedulerEngine()
     app.state.scheduler_engine = engine
 
-    async def _execute_job_wrapper(job_config):
-        async with app.state.session_factory() as session:
-            await execute_job(
-                job_config,
-                "scheduled",
-                db_session=session,
-                settings=settings,
-                docker_ops=docker_ops,
-            )
-
     await engine.start()
-    await engine.register_jobs(configs, _execute_job_wrapper)
+    await engine.register_jobs(
+        configs,
+        _execute_job_wrapper,
+        kwargs=dict(
+            session_factory=app.state.session_factory,
+            settings=settings,
+            docker_ops=docker_ops,
+        ),
+    )
     logger.info("Scheduler started")
 
     yield

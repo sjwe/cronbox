@@ -22,6 +22,14 @@ from cronbox.utils import read_log_tail
 
 logger = logging.getLogger(__name__)
 
+
+async def _mcp_execute_job_wrapper(job_config: JobConfig, *, session_factory, settings, docker_ops=None):
+    async with session_factory() as session:
+        await execute_job(
+            job_config, "scheduled", db_session=session, settings=settings, docker_ops=docker_ops,
+        )
+
+
 # Module-level state, initialized by lifespan
 _settings: Settings | None = None
 _session_factory = None
@@ -62,14 +70,12 @@ async def app_lifespan(server):
     _engine = SchedulerEngine()
     configs = load_jobs(_settings.jobs_config_dir)
 
-    async def _execute_job_wrapper(job_config: JobConfig):
-        async with _session_factory() as session:
-            await execute_job(
-                job_config, "scheduled", db_session=session, settings=_settings
-            )
-
     await _engine.start()
-    await _engine.register_jobs(configs, _execute_job_wrapper)
+    await _engine.register_jobs(
+        configs,
+        _mcp_execute_job_wrapper,
+        kwargs=dict(session_factory=_session_factory, settings=_settings),
+    )
     logger.info("MCP server initialized with %d jobs", len(configs))
 
     try:
@@ -349,13 +355,11 @@ async def reload_config() -> str:
 
     configs = load_jobs(_settings.jobs_config_dir)
 
-    async def _execute_job_wrapper(job_config: JobConfig):
-        async with _session_factory() as session:
-            await execute_job(
-                job_config, "scheduled", db_session=session, settings=_settings
-            )
-
-    await _engine.register_jobs(configs, _execute_job_wrapper)
+    await _engine.register_jobs(
+        configs,
+        _mcp_execute_job_wrapper,
+        kwargs=dict(session_factory=_session_factory, settings=_settings),
+    )
     return json.dumps(
         {"message": "Configuration reloaded", "jobs_loaded": len(configs)}
     )

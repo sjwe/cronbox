@@ -176,11 +176,16 @@ async def reload_config(request: Request):
 
     docker_ops = getattr(request.app.state, "docker_ops", None)
 
-    async def _execute_job_wrapper(job_config):
-        session_factory = request.app.state.session_factory
-        async with session_factory() as session:
-            await execute_job(job_config, "scheduled", db_session=session, settings=settings, docker_ops=docker_ops)
+    from cronbox.main import _execute_job_wrapper
 
-    await engine.register_jobs(configs, _execute_job_wrapper)
+    await engine.register_jobs(
+        configs,
+        _execute_job_wrapper,
+        kwargs=dict(
+            session_factory=request.app.state.session_factory,
+            settings=settings,
+            docker_ops=docker_ops,
+        ),
+    )
 
     return ReloadResponse(message="Configuration reloaded", jobs_loaded=len(configs))

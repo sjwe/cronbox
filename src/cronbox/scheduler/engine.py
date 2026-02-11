@@ -13,7 +13,10 @@ class SchedulerEngine:
         self._configs: dict[str, JobConfig] = {}
 
     async def register_jobs(
-        self, configs: list[JobConfig], execute_fn: Callable
+        self,
+        configs: list[JobConfig],
+        execute_fn: Callable,
+        kwargs: dict | None = None,
     ):
         self._configs = {c.name: c for c in configs}
         for config in configs:
@@ -33,6 +36,7 @@ class SchedulerEngine:
                 trigger,
                 id=config.name,
                 args=[config],
+                kwargs=kwargs or {},
                 conflict_policy=ConflictPolicy.replace,
             )
 
