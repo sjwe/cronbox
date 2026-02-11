@@ -14,31 +14,51 @@ A job scheduler and runner that manages and executes jobs inside Docker containe
 - **MCP server** — LLMs can query status and control jobs via FastMCP (STDIO + HTTP)
 - **YAML config** — version-controllable job definitions, one file per job
 
-## Quick Start
+## Quick Start (Docker Compose)
 
-### Prerequisites
-
-- Python 3.12+
-- Docker (running)
-- Node.js 20+ (for frontend development)
-
-### Install & Run
+### 1. Create a `.env` file
 
 ```bash
-# Install Python dependencies
-pip install -e .
-
-# Start the scheduler + API server
-uvicorn cronbox.main:app --host 0.0.0.0 --port 8000
+cp .env.example .env
 ```
 
-### With Docker Compose
+Generate a JWT secret and write it into `.env`:
+
+```bash
+# macOS / Linux
+openssl rand -hex 32
+```
+
+Copy the output and paste it as the `JWT_SECRET` value in `.env`. This secret signs all authentication tokens — keep it private and don't commit it.
+
+### 3. Build and start
 
 ```bash
 docker compose up -d
 ```
 
-The web UI is available at `http://localhost:8000`.
+### 4. Create the admin user
+
+```bash
+docker compose exec cronbox cronbox create-user \
+  --username admin \
+  --email admin@example.com \
+  --role admin \
+  --password 'your-password-here'
+```
+
+### 5. Log in
+
+Open `http://localhost:8000` and sign in with the admin credentials.
+
+### Local Development (no Docker)
+
+```bash
+pip install -e .
+
+# No JWT_SECRET = dev mode (no auth required)
+uvicorn cronbox.main:app --reload
+```
 
 ## Job Configuration
 
@@ -98,25 +118,48 @@ All settings are configurable via environment variables prefixed with `CRONBOX_`
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CRONBOX_JWT_SECRET` | | **Required for auth.** JWT signing secret. Empty = dev mode (no auth). |
 | `CRONBOX_JOBS_CONFIG_DIR` | `config/jobs` | Path to YAML job files |
 | `CRONBOX_LOGS_DIR` | `logs` | Log file directory |
 | `CRONBOX_DB_PATH` | `data/cronbox.db` | SQLite database path |
 | `CRONBOX_DISCORD_WEBHOOK_URL` | | Discord webhook for failure alerts |
 | `CRONBOX_WEB_BASE_URL` | | Base URL for notification links |
 | `CRONBOX_LOG_RETENTION_DAYS` | `30` | Auto-delete logs older than this |
+| `CRONBOX_MCP_API_KEY` | | API key for MCP server authentication |
+
+## Authentication
+
+cronbox supports three auth modes based on configuration:
+
+| `JWT_SECRET` | Behavior |
+|---|---|
+| empty | Dev mode — no auth required |
+| set | Full multi-user auth (JWT + per-user API keys + RBAC) |
+
+**Roles:** `admin` (full access), `operator` (read + trigger jobs), `viewer` (read-only).
+
+Programmatic access uses per-user API keys (generated in Settings page), passed via `X-API-Key` header.
 
 ## API
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/jobs` | List all jobs |
-| GET | `/api/jobs/{name}` | Job detail + recent runs |
-| POST | `/api/jobs/{name}/trigger` | Trigger a manual run |
-| POST | `/api/config/reload` | Reload YAML configs |
-| GET | `/api/runs?job_name=X` | Run history |
-| GET | `/api/runs/{id}` | Run detail with step results |
-| GET | `/api/logs/{job_name}` | List log files |
-| GET | `/api/logs/{job_name}/{filename}` | Log file content |
+All endpoints except `/api/auth/*` require authentication when `JWT_SECRET` is set.
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/login` | — | Login with username/password |
+| POST | `/api/auth/refresh` | — | Refresh access token |
+| GET | `/api/jobs` | viewer+ | List all jobs |
+| GET | `/api/jobs/{name}` | viewer+ | Job detail + recent runs |
+| POST | `/api/jobs/{name}/trigger` | operator+ | Trigger a manual run |
+| POST | `/api/config/reload` | admin | Reload YAML configs |
+| GET | `/api/runs?job_name=X` | viewer+ | Run history |
+| GET | `/api/runs/{id}` | viewer+ | Run detail with step results |
+| GET | `/api/logs/{job_name}` | viewer+ | List log files |
+| GET | `/api/logs/{job_name}/{filename}` | viewer+ | Log file content |
+| GET | `/api/keys` | viewer+ | List your API keys |
+| POST | `/api/keys` | viewer+ | Generate new API key |
+| GET | `/api/admin/users` | admin | List all users |
+| POST | `/api/admin/users` | admin | Create user |
 
 ## MCP Server
 

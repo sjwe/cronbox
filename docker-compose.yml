@@ -9,6 +9,7 @@ services:
       - ./data:/app/data
       - ./config:/app/config:ro
     environment:
+      - CRONBOX_JWT_SECRET=${JWT_SECRET}
       - CRONBOX_DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - CRONBOX_WEB_BASE_URL=${WEB_BASE_URL:-http://localhost:8000}
     restart: unless-stopped
