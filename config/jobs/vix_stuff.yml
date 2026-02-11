@@ -1,0 +1,17 @@
+name: vix_stuff
+description: "VIX regime + curvature analysis (Mon-Fri at 11:30 PM ET)"
+schedule:
+  cron: "30 23 * * 1-5"
+  timezone: "America/New_York"
+container:
+  mode: persistent
+  name: polygon_rip
+steps:
+  - name: regime_analysis
+    command: "python /regime.py"
+    timeout_seconds: 1800
+  - name: curvature_analysis
+    command: "python /curvature.py"
+    timeout_seconds: 1800
+notify:
+  on_failure: true

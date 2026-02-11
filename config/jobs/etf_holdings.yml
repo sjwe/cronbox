@@ -1,0 +1,14 @@
+name: etf_holdings
+description: "ETF holdings update (Tue-Sat at 8:00 AM ET)"
+schedule:
+  cron: "0 8 * * 2-6"
+  timezone: "America/New_York"
+container:
+  mode: persistent
+  name: polygon_rip
+steps:
+  - name: fetch_holdings
+    command: "python /etf_holdings/fetch_vixy_holdings.py"
+    timeout_seconds: 1800
+notify:
+  on_failure: true

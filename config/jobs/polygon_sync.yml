@@ -1,0 +1,14 @@
+name: polygon_sync
+description: "Daily polygon data sync (Tue-Sat at 4:00 AM ET)"
+schedule:
+  cron: "0 4 * * 2-6"
+  timezone: "America/New_York"
+container:
+  mode: persistent
+  name: polygon_rip
+steps:
+  - name: sync_data
+    command: "/polygon/sync.sh"
+    timeout_seconds: 3600
+notify:
+  on_failure: true
