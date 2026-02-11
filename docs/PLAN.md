@@ -8,8 +8,8 @@ Replace ad-hoc crontab + shell scripts with a proper job scheduler that runs all
 
 - **Backend**: Python 3.12+ — FastAPI (API + static file serving), APScheduler 4.x (scheduling), Docker SDK (container ops), SQLAlchemy + aiosqlite (run history + user/auth data), httpx (Discord webhooks), PyJWT (authentication tokens), bcrypt (password hashing)
 - **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS v4 + TanStack Query
-- **Config**: YAML files in `config/jobs/` (one per job)
-- **Storage**: SQLite for run metadata + users + API keys, disk files for logs
+- **Config**: SQLite database (seeded from YAML files on first run)
+- **Storage**: SQLite for job configs + run metadata + users + API keys, disk files for logs
 - **Auth**: JWT access/refresh tokens for browser sessions, per-user API keys for programmatic access, 3-role RBAC (admin/operator/viewer)
 
 ## Project Structure
@@ -22,7 +22,7 @@ cronbox/
 ├── docs/
 │   ├── PLAN.md                      # This file
 │   └── THINKING_LOG.md              # Decision log
-├── config/jobs/                     # YAML job definitions
+├── config/jobs/                     # YAML job definitions (seed data, imported on first run)
 │   ├── polygon_sync.yml
 │   ├── etf_holdings.yml
 │   └── vix_stuff.yml
@@ -34,8 +34,8 @@ cronbox/
 │   ├── utils.py                     # Shared utilities (read_log_tail)
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── job_config.py            # Pydantic models for YAML schema
-│   │   ├── database.py              # SQLAlchemy models (job_runs, step_results)
+│   │   ├── job_config.py            # Pydantic models for job config schema
+│   │   ├── database.py              # SQLAlchemy models (jobs, job_runs, step_results)
 │   │   ├── auth.py                  # Auth models (users, api_keys, refresh_tokens)
 │   │   ├── queries.py               # Shared query helpers (batch latest runs)
 │   │   └── api_models.py            # API response schemas
@@ -62,7 +62,7 @@ cronbox/
 │       ├── routes_auth.py           # /api/auth — login, refresh, logout, me
 │       ├── routes_keys.py           # /api/keys — API key CRUD
 │       ├── routes_users.py          # /api/admin/users — user management (admin-only)
-│       ├── routes_jobs.py           # /api/jobs — list, detail, trigger, reload
+│       ├── routes_jobs.py           # /api/jobs — CRUD, trigger, reload
 │       ├── routes_runs.py           # /api/runs — run history + detail
 │       └── routes_logs.py           # /api/logs — log file listing + content
 ├── frontend/
@@ -83,17 +83,20 @@ cronbox/
 │           ├── ProtectedRoute.tsx    # Auth gate wrapper
 │           ├── Settings.tsx          # User profile + API key management
 │           ├── AdminUsers.tsx        # Admin user management (admin-only)
-│           ├── JobList.tsx           # Dashboard table with status badges
-│           ├── JobDetail.tsx         # Config + run history + trigger button
+│           ├── JobList.tsx           # Dashboard table with status badges + New Job button
+│           ├── JobDetail.tsx         # Config + run history + trigger/edit/delete buttons
+│           ├── JobForm.tsx           # Job create/edit form (admin-only)
 │           ├── LogViewer.tsx         # Monospace log viewer with follow mode
 │           └── StatusBadge.tsx       # Green/red/blue/gray status indicators
 ├── logs/                             # Runtime (git-ignored): per-job timestamped log files
 └── data/                             # Runtime (git-ignored): SQLite database
 ```
 
-## YAML Job Config Schema
+## Job Config Schema
 
-Each job is a single YAML file in `config/jobs/`.
+Job configs are stored in the SQLite database as serialized JSON (via the `Job` table). On first startup, YAML files in `config/jobs/` are imported into the database as seed data. After seeding, the database is the sole source of truth — jobs are managed via the API and web UI.
+
+The Pydantic `JobConfig` model validates the schema in both directions (YAML import and API requests).
 
 ```yaml
 name: polygon_sync
@@ -198,6 +201,9 @@ notify:
 ## Execution Flow
 
 ```
+Startup → load Job rows from DB → register_jobs() in APScheduler
+  (If DB empty and YAML dir exists → seed from YAML files first)
+
 APScheduler fires → execute_job(config)
   → Create JobRun record in SQLite (status=running)
   → Open log file: logs/{job_name}/{timestamp}.log
@@ -227,11 +233,11 @@ Multi-user auth with three mechanisms:
 
 ### Roles
 
-| Role | Read (jobs/runs/logs) | Trigger jobs | Reload config | Manage users |
-|------|----------------------|-------------|---------------|-------------|
-| **viewer** | Yes | No | No | No |
-| **operator** | Yes | Yes | No | No |
-| **admin** | Yes | Yes | Yes | Yes |
+| Role | Read (jobs/runs/logs) | Trigger jobs | Manage jobs | Reload config | Manage users |
+|------|----------------------|-------------|------------|---------------|-------------|
+| **viewer** | Yes | No | No | No | No |
+| **operator** | Yes | Yes | No | No | No |
+| **admin** | Yes | Yes | Yes | Yes | Yes |
 
 ### Auth Flow
 
@@ -269,8 +275,11 @@ All routes prefixed with `/api`. Frontend served at `/` as static files. All end
 |--------|------|--------------|-------------|
 | GET | `/api/jobs` | viewer+ | List all jobs with next run time + last status |
 | GET | `/api/jobs/{name}` | viewer+ | Job detail + step list + recent runs |
+| POST | `/api/jobs` | admin | Create a new job |
+| PUT | `/api/jobs/{name}` | admin | Update an existing job |
+| DELETE | `/api/jobs/{name}` | admin | Delete a job (409 if running) |
 | POST | `/api/jobs/{name}/trigger` | operator+ | Trigger immediate manual run |
-| POST | `/api/config/reload` | admin | Hot-reload YAML configs into scheduler |
+| POST | `/api/config/reload` | admin | Import YAML configs into DB (upsert) |
 
 ### Run & Log Endpoints
 
@@ -301,7 +310,7 @@ All routes prefixed with `/api`. Frontend served at `/` as static files. All end
 
 ## MCP Server (FastMCP)
 
-Exposes cronbox status and control to LLMs via MCP. Read-only for configs, plus job triggering. No config mutation — YAML files remain the sole source of truth, edited by humans.
+Exposes cronbox status and control to LLMs via MCP. Read-only for configs, plus job triggering. No config mutation via MCP — job management is done through the web UI and REST API. The MCP server reads from `SchedulerEngine._configs` which is automatically kept in sync when jobs are created/updated/deleted via the API.
 
 ### Transports
 
@@ -320,7 +329,7 @@ Exposes cronbox status and control to LLMs via MCP. Read-only for configs, plus 
 | `get_log` | `job_name: str, run_id?: int` | Log content (latest if run_id omitted) |
 | `reload_config` | — | Hot-reload YAML configs |
 
-No create/update/delete job tools — config changes are made by editing YAML files directly.
+No create/update/delete job tools — config changes are made through the web UI or REST API.
 
 ### Resources
 
@@ -352,6 +361,7 @@ Single-page React app with auth-protected views. Dark theme (gray-950/900/800 ba
 
 ### Dashboard (`/`)
 - Table of all jobs: Name, Schedule (human-readable), Next Run, Last Status, Last Run Time, Actions (trigger button)
+- "New Job" button in header (admin only) → navigates to `/jobs/new`
 - Status badges: green=success, red=failed, gray=never run, blue spinner=running
 - Auto-polls `GET /api/jobs` every 10 seconds
 - Trigger button visible only to operator+ roles
@@ -359,9 +369,17 @@ Single-page React app with auth-protected views. Dark theme (gray-950/900/800 ba
 ### Job Detail (`/jobs/:name`)
 - Header: job name, description, cron schedule
 - "Trigger Now" button → `POST /api/jobs/{name}/trigger` (operator+ only)
+- "Edit" button → navigates to `/jobs/:name/edit` (admin only)
+- "Delete" button → confirm dialog, then `DELETE /api/jobs/{name}` (admin only)
 - Steps list: step name + command
 - Run history table (last 50): Status, Started, Duration, Trigger type
 - Each run row expands/links to show step results + log
+
+### Job Form (`/jobs/new` and `/jobs/:name/edit`) — admin only
+- Reusable form component for create and edit flows
+- Sections: Basic (name, description), Schedule (cron, timezone, enabled), Container (mode, name/image, volumes, network), Steps (dynamic list with add/remove), Notifications (on_failure, on_success, discord webhook), Timeout
+- Edit mode pre-populates all fields from the existing job config
+- Name field disabled on edit (identifier cannot change)
 
 ### Settings (`/settings`)
 - **Profile section**: username, email, role (read-only)
@@ -475,18 +493,24 @@ All phases completed 2026-02-11.
 
 7. **Phase 7 — Authentication & Authorization** ✅: Multi-user JWT auth, per-user API keys, 3-role RBAC (admin/operator/viewer). Frontend login page, settings page with API key management, admin user management. CLI bootstrap. 120 tests (94 backend + 26 frontend).
 
+8. **Phase 8 — Job CRUD** 🔧: Move job configs from YAML files to SQLite database. Add create/update/delete API endpoints (admin-only). Frontend job form for create/edit, delete button with confirmation. YAML files seed DB on first startup for backward compatibility. MCP server unchanged (reads from scheduler engine automatically).
+
 ## Verification Plan
 
 1. Start scheduler: `uvicorn cronbox.main:app`
-2. Verify YAML loading: `GET /api/jobs` returns all 3 jobs with correct schedules
-3. Trigger manually: `POST /api/jobs/polygon_sync/trigger` → check Docker container executes, log file appears in `logs/polygon_sync/`, run recorded in `GET /api/runs`
-4. Verify failure handling: create a job with a deliberately bad command, trigger it, confirm it's marked failed and Discord notification fires
-5. Frontend: open `http://localhost:8000`, redirected to `/login`, log in with admin credentials, confirm dashboard shows jobs, drill into job detail, view logs
-6. Auth: verify viewer can read but not trigger, operator can trigger, admin can reload config and manage users
-7. API keys: generate key in Settings page, use it via `curl -H "X-API-Key: cb_..."`, verify expiration
-8. MCP STDIO: `python -m cronbox.mcp`, call `list_jobs` tool via Claude Desktop or fastmcp client
-9. MCP HTTP: `python -m cronbox.mcp --transport http --port 9100`, verify tools at `http://localhost:9100`
-10. Docker deployment: `docker compose up`, verify identical behavior
+2. Verify YAML seeding: on first startup with empty DB, `GET /api/jobs` returns all 3 YAML-defined jobs
+3. Create a new job via UI: navigate to `/jobs/new`, fill form, submit → verify it appears in job list and scheduler picks it up
+4. Edit a job via UI: change cron schedule or add/remove steps → verify changes persist after page reload and scheduler updates
+5. Delete a job via UI: confirm dialog → verify removed from job list and scheduler
+6. Test API directly: `curl -X POST /api/jobs`, `curl -X PUT /api/jobs/{name}`, `curl -X DELETE /api/jobs/{name}`
+7. Restart the app: verify all DB-stored jobs survive restart without YAML files
+8. Trigger manually: `POST /api/jobs/polygon_sync/trigger` → check Docker container executes, log file appears, run recorded
+9. Verify failure handling: create a job with a deliberately bad command, trigger it, confirm it's marked failed and Discord notification fires
+10. Frontend: open `http://localhost:8000`, redirected to `/login`, log in with admin credentials, confirm dashboard shows jobs, drill into job detail, view logs
+11. Auth: verify viewer can read but not create/edit/delete jobs, operator can trigger, admin can manage jobs and users
+12. API keys: generate key in Settings page, use it via `curl -H "X-API-Key: cb_..."`, verify expiration
+13. MCP: verify `list_jobs` / `get_job` still work correctly with DB-backed jobs
+14. Docker deployment: `docker compose up`, verify identical behavior
 
 ## Implementation Notes
 

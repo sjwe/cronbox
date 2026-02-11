@@ -50,7 +50,7 @@ Rationale:
 
 ---
 
-## Decision: Job Config Format → YAML Files
+## Decision: Job Config Format → YAML Files (superseded — see "Job CRUD" section below)
 
 **Options considered:**
 - YAML/TOML files (version-controllable)
@@ -671,11 +671,88 @@ Also rewrote the README Quick Start from a generic `docker compose up` to a 5-st
 
 ---
 
+## 2026-02-11 — Job CRUD: Move Config Storage from YAML to SQLite
+
+### Problem
+
+Jobs are defined as YAML files in `config/jobs/` and loaded at startup. There's no way to create, modify, or delete jobs without SSH-ing into the server, editing files, and triggering a config reload. This defeats the purpose of having a web UI — the most common admin action (managing jobs) requires direct server access.
+
+### Decision: Database-Only Storage (Not YAML Write-Back or Hybrid)
+
+**Options considered:**
+- **Database only** — store job configs in SQLite, YAML files seed on first run
+- **Write to YAML files** — API writes `.yml` files on disk, keeps them as source of truth
+- **Hybrid (DB + YAML seed)** — DB for CRUD, YAML loaded on every startup as defaults
+
+**Choice: Database only**
+
+Rationale:
+- Clean CRUD with proper concurrency — no file I/O race conditions
+- Consistent with existing patterns (Users, API Keys are already in SQLite)
+- SQLAlchemy + Pydantic provide validation on both read and write paths
+- No risk of YAML parse errors from API-generated files
+- Simpler code — one source of truth, one code path
+
+**Why not YAML write-back:**
+- File I/O from an async web server is messy (needs thread pool)
+- Concurrent writes risk corruption or partial writes
+- YAML formatting/comments would be lost on rewrite
+- Docker volume mounts complicate file permissions
+
+**Why not hybrid:**
+- Ambiguous source of truth — which wins if DB and YAML disagree?
+- Users would need to understand the precedence rules
+- More code complexity for marginal benefit
+
+### Decision: Seed from YAML on First Run
+
+On startup, if the database has zero jobs AND the YAML config directory contains files, import them into the database automatically. This provides a seamless upgrade path from the YAML-based setup.
+
+After seeding, YAML files become irrelevant — the database is the sole source of truth. The `POST /api/config/reload` endpoint is repurposed to re-import YAML files into the DB (upsert), giving admins a manual escape hatch.
+
+### Decision: Admin-Only for Job CRUD
+
+Job create/update/delete requires the `admin` role, not `operator`.
+
+Rationale:
+- Creating a job means defining arbitrary commands that execute in Docker containers
+- This is a security-sensitive operation — effectively granting remote code execution
+- The `operator` role is scoped to triggering existing jobs (which were defined by admins)
+- Keeping job management admin-only maintains a clear security boundary
+- If needed later, a new `job_manager` role could be introduced
+
+### Decision: Store Config as JSON Blob (Not Relational)
+
+The `Job` table stores the full `JobConfig` as a JSON string in a `config_json` TEXT column, rather than normalizing into separate tables for steps, container, schedule, notify, etc.
+
+Rationale:
+- The `JobConfig` Pydantic model already handles validation — no need for DB-level constraints
+- Serialization/deserialization is trivial: `model_dump_json()` / `model_validate_json()`
+- Avoids 5+ new tables with foreign keys for a relatively small config
+- Job configs are always read/written as a unit, never queried by individual fields
+- Keeps the schema simple and the migration path clean
+
+### Decision: Frontend — Dedicated Pages (Not Modals)
+
+Job create and edit use full pages (`/jobs/new` and `/jobs/:name/edit`) rather than modal dialogs.
+
+Rationale:
+- The job form is complex (6 sections, dynamic step list, key-value editors)
+- Modals would feel cramped and require scrolling within a constrained viewport
+- Dedicated pages allow proper URL routing (bookmarkable, browser back button works)
+- Consistent with the existing page-per-view architecture
+
+### Decision: MCP Server Unchanged
+
+The MCP server is not modified. It reads from `SchedulerEngine._configs` and `SchedulerEngine.get_config()` / `get_all_configs()`, which are updated by the new `register_job()` and `remove_job()` methods. MCP tools automatically reflect job changes made via the API/UI without any MCP code changes.
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.
 - **Job dependencies**: No job-to-job dependency support in v1. If needed later, could add a `depends_on` field.
-- **Config hot-reload via filesystem watcher**: v1 uses a manual `POST /api/config/reload` endpoint. Could add `watchfiles` to auto-detect YAML changes later.
+- ~~**Config hot-reload via filesystem watcher**: v1 uses a manual `POST /api/config/reload` endpoint. Could add `watchfiles` to auto-detect YAML changes later.~~ **No longer relevant**: Job configs are now stored in the database and managed via the API/web UI. The reload endpoint is repurposed for one-time YAML import.
 - ~~**Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.~~ **Fully resolved**: Multi-user JWT auth + per-user API keys + 3-role RBAC (admin/operator/viewer). Frontend login page, API key management UI, admin user management. CLI bootstrap with `cronbox create-user`. Full backwards compatibility (empty jwt_secret = dev mode). See "Authentication System Design" section above.
 - **WebSocket for live logs**: v1 polls for log content. Could upgrade to WebSocket streaming for real-time log following.
 - **Log retention cleanup**: `CRONBOX_LOG_RETENTION_DAYS` is configured but the cleanup task is not yet implemented. Needs a periodic job that deletes log files older than the threshold.

@@ -17,9 +17,12 @@ from cronbox.config import Settings
 from cronbox.executor.docker_ops import DockerOperations
 from cronbox.executor.runner import execute_job
 import cronbox.models.auth  # noqa: F401 — register auth tables
-from cronbox.models.database import get_engine, get_session_factory, init_db
+from cronbox.models.database import Job, get_engine, get_session_factory, init_db
+from cronbox.models.job_config import JobConfig
 from cronbox.scheduler.engine import SchedulerEngine
 from cronbox.scheduler.loader import load_jobs
+
+from sqlalchemy import func, select
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,9 +48,26 @@ async def lifespan(app: FastAPI):
     await init_db(settings.db_path)
     app.state.session_factory = get_session_factory(settings.db_path)
 
-    # Load job configs
-    configs = load_jobs(settings.jobs_config_dir)
-    logger.info("Loaded %d job configs", len(configs))
+    # Load job configs from database, seed from YAML if DB is empty
+    async with app.state.session_factory() as session:
+        count_result = await session.execute(select(func.count(Job.id)))
+        job_count = count_result.scalar() or 0
+
+        if job_count == 0:
+            # Seed from YAML files on first run
+            yaml_configs = load_jobs(settings.jobs_config_dir)
+            if yaml_configs:
+                for config in yaml_configs:
+                    session.add(Job(name=config.name, config_json=config.model_dump_json()))
+                await session.commit()
+                logger.info("Seeded %d jobs from YAML files into database", len(yaml_configs))
+
+        # Load all jobs from database
+        result = await session.execute(select(Job))
+        db_jobs = result.scalars().all()
+
+    configs = [JobConfig.model_validate_json(j.config_json) for j in db_jobs]
+    logger.info("Loaded %d job configs from database", len(configs))
 
     # Shared Docker client (singleton for the app lifetime)
     docker_ops = DockerOperations()

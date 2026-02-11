@@ -147,3 +147,54 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     role: str | None = None
     is_active: bool | None = None
+
+
+# --- Job CRUD models ---
+
+
+class StepConfigRequest(BaseModel):
+    name: str
+    command: str
+    timeout_seconds: int | None = None
+    workdir: str | None = None
+    environment: dict[str, str] | None = None
+    user: str | None = None
+
+
+class ContainerConfigRequest(BaseModel):
+    mode: str  # "persistent" or "ephemeral"
+    name: str | None = None
+    image: str | None = None
+    volumes: dict[str, str] | None = None
+    network: str | None = None
+
+
+class ScheduleConfigRequest(BaseModel):
+    cron: str
+    timezone: str = "UTC"
+    enabled: bool = True
+
+
+class NotifyConfigRequest(BaseModel):
+    on_failure: bool = True
+    on_success: bool = False
+    discord_webhook_url: str | None = None
+
+
+class CreateJobRequest(BaseModel):
+    name: str
+    description: str | None = None
+    schedule: ScheduleConfigRequest
+    container: ContainerConfigRequest
+    steps: list[StepConfigRequest]
+    notify: NotifyConfigRequest | None = None
+    timeout_seconds: int = 7200
+
+
+class UpdateJobRequest(BaseModel):
+    description: str | None = None
+    schedule: ScheduleConfigRequest | None = None
+    container: ContainerConfigRequest | None = None
+    steps: list[StepConfigRequest] | None = None
+    notify: NotifyConfigRequest | None = None
+    timeout_seconds: int | None = None

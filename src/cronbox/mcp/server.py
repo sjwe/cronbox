@@ -13,11 +13,13 @@ from cronbox.config import Settings
 from cronbox.executor.runner import execute_job
 import cronbox.models.auth as auth_models  # noqa: F401 — register auth tables
 from cronbox.models.auth import APIKey, User, UserRole
-from cronbox.models.database import JobRun, get_engine, get_session_factory, init_db
+from cronbox.models.database import Job, JobRun, get_engine, get_session_factory, init_db
 from cronbox.models.job_config import JobConfig
 from cronbox.models.queries import get_latest_runs
 from cronbox.scheduler.engine import SchedulerEngine
 from cronbox.scheduler.loader import load_jobs
+
+from sqlalchemy import func as sa_func
 from cronbox.utils import read_log_tail
 
 logger = logging.getLogger(__name__)
@@ -67,16 +69,32 @@ async def app_lifespan(server):
                 )
                 _mcp_user = user_result.scalar_one_or_none()
 
-    _engine = SchedulerEngine()
-    configs = load_jobs(_settings.jobs_config_dir)
+    # Load job configs from database, seed from YAML if DB is empty
+    async with _session_factory() as session:
+        count_result = await session.execute(select(sa_func.count(Job.id)))
+        job_count = count_result.scalar() or 0
 
+        if job_count == 0:
+            yaml_configs = load_jobs(_settings.jobs_config_dir)
+            if yaml_configs:
+                for config in yaml_configs:
+                    session.add(Job(name=config.name, config_json=config.model_dump_json()))
+                await session.commit()
+                logger.info("MCP: Seeded %d jobs from YAML into database", len(yaml_configs))
+
+        result = await session.execute(select(Job))
+        db_jobs = result.scalars().all()
+
+    configs = [JobConfig.model_validate_json(j.config_json) for j in db_jobs]
+
+    _engine = SchedulerEngine()
     await _engine.start()
     await _engine.register_jobs(
         configs,
         _mcp_execute_job_wrapper,
         kwargs=dict(session_factory=_session_factory, settings=_settings),
     )
-    logger.info("MCP server initialized with %d jobs", len(configs))
+    logger.info("MCP server initialized with %d jobs from database", len(configs))
 
     try:
         yield

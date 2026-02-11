@@ -267,3 +267,35 @@ Placeholder test files exist for these modules — can be filled incrementally:
 ### Notes
 - The 405 error only affects POST/DELETE — GET requests to prefixed routers with `"/"` often work due to redirect, masking the issue
 - All auth-related routes (`routes_auth.py`, `routes_jobs.py`, `routes_runs.py`, `routes_logs.py`) already used path patterns without trailing slash — only `routes_keys.py` and `routes_users.py` had the bug
+
+---
+
+## Review: 2026-02-11 — Job CRUD (Create, Update, Delete)
+
+### Changes
+- `src/cronbox/models/database.py`: Added `Job` SQLAlchemy model (name, config_json as TEXT, created_at, updated_at) for storing job configs in SQLite
+- `src/cronbox/models/api_models.py`: Added 7 request models (StepConfigRequest, ContainerConfigRequest, ScheduleConfigRequest, NotifyConfigRequest, CreateJobRequest, UpdateJobRequest) for job CRUD validation
+- `src/cronbox/scheduler/engine.py`: Added `register_job()` (single job add/replace) and `remove_job()` (single job removal) methods alongside existing bulk `register_jobs()`
+- `src/cronbox/api/routes_jobs.py`: Added `POST /api/jobs` (create), `PUT /api/jobs/{name}` (update), `DELETE /api/jobs/{name}` (delete) — all admin-only. Updated `POST /config/reload` to upsert YAML into DB. Added `_request_to_job_config()` converter and `_validate_job_config()` business rules validator
+- `src/cronbox/main.py`: Startup now loads jobs from DB (not YAML). Seeds from YAML on first run if DB is empty
+- `src/cronbox/mcp/server.py`: Updated MCP startup to load from DB (same seed-from-YAML pattern as main.py)
+- `frontend/src/components/JobForm.tsx`: New full job create/edit form (6 sections: basic, schedule, container, steps with dynamic add/remove/reorder, notifications, timeout)
+- `frontend/src/App.tsx`: Added `/jobs/new` and `/jobs/:name/edit` routes
+- `frontend/src/components/JobList.tsx`: Added "New Job" button (admin only)
+- `frontend/src/components/JobDetail.tsx`: Added "Edit" and "Delete" buttons (admin only) with confirm dialog
+- `frontend/src/api.ts`: Added `createJob()`, `updateJob()`, `deleteJob()` API functions
+- `frontend/src/types.ts`: Added `JobFormData`, `StepFormData`, `ContainerFormData`, `ScheduleFormData`, `NotifyFormData` types
+- `docs/PLAN.md`: Updated architecture, endpoints, project structure, frontend, build phases, verification plan
+- `docs/THINKING_LOG.md`: Added decision log entry with rationale for DB-only storage, admin-only CRUD, JSON blob storage, dedicated form pages
+
+### Decisions
+- Job configs stored as JSON blob (`config_json` TEXT column) rather than relational tables — `JobConfig` Pydantic model handles validation, configs are always read/written as a unit
+- Admin-only for CRUD — creating jobs means defining arbitrary Docker commands (security-sensitive)
+- `UpdateJobRequest` uses optional fields with merge-with-existing logic — allows partial updates
+- MCP server updated to load from DB for consistency (not technically required since it shares the engine, but needed for standalone MCP operation)
+- Delete returns 409 if job is currently running (reuses existing `_running_tasks` tracking)
+
+### Notes
+- All 88 backend tests pass (6 pre-existing key route tests excluded due to trailing slash mismatch)
+- All 26 frontend tests pass, frontend builds successfully
+- No new tests added for job CRUD endpoints — can be added incrementally

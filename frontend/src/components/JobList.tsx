@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { fetchJobs, triggerJob } from "../api";
+import { useAuth } from "../context/AuthContext";
 import StatusBadge from "./StatusBadge";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -61,6 +62,7 @@ export function relativeTime(iso: string): string {
 }
 
 export default function JobList() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const { data: jobs, isLoading, error } = useQuery({
     queryKey: ["jobs"],
@@ -91,7 +93,17 @@ export default function JobList() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Jobs</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Jobs</h1>
+        {user?.role === "admin" && (
+          <Link
+            to="/jobs/new"
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+          >
+            New Job
+          </Link>
+        )}
+      </div>
       <div className="overflow-x-auto rounded-lg border border-gray-800">
         <table className="w-full text-sm">
           <thead>

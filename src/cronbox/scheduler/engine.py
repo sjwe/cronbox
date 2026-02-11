@@ -40,6 +40,45 @@ class SchedulerEngine:
                 conflict_policy=ConflictPolicy.replace,
             )
 
+    async def register_job(
+        self,
+        config: JobConfig,
+        execute_fn: Callable,
+        kwargs: dict | None = None,
+    ):
+        self._configs[config.name] = config
+        if not config.schedule.enabled:
+            # Remove any existing schedule if disabling
+            try:
+                await self.scheduler.remove_schedule(config.name)
+            except Exception:
+                pass
+            return
+        parts = config.schedule.cron.split()
+        trigger = CronTrigger(
+            minute=parts[0],
+            hour=parts[1],
+            day=parts[2],
+            month=parts[3],
+            day_of_week=parts[4],
+            timezone=config.schedule.timezone,
+        )
+        await self.scheduler.add_schedule(
+            execute_fn,
+            trigger,
+            id=config.name,
+            args=[config],
+            kwargs=kwargs or {},
+            conflict_policy=ConflictPolicy.replace,
+        )
+
+    async def remove_job(self, job_name: str):
+        self._configs.pop(job_name, None)
+        try:
+            await self.scheduler.remove_schedule(job_name)
+        except Exception:
+            pass
+
     async def start(self):
         await self.scheduler.__aenter__()
 

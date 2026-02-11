@@ -1,4 +1,4 @@
-import type { JobSummary, JobDetail, RunSummary, RunDetail, AuthUser, APIKeyItem, APIKeyCreated, UserItem } from "./types";
+import type { JobSummary, JobDetail, RunSummary, RunDetail, AuthUser, APIKeyItem, APIKeyCreated, UserItem, JobFormData } from "./types";
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem("cronbox_token");
@@ -39,6 +39,30 @@ export function fetchJobs(): Promise<JobSummary[]> {
 
 export function fetchJob(name: string): Promise<JobDetail> {
   return fetchJSON(`/api/jobs/${encodeURIComponent(name)}`);
+}
+
+export function createJob(data: JobFormData): Promise<{ message: string; job_name: string }> {
+  return fetchJSON("/api/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateJob(name: string, data: Partial<JobFormData>): Promise<{ message: string; job_name: string }> {
+  return fetchJSON(`/api/jobs/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteJob(name: string): Promise<void> {
+  const token = localStorage.getItem("cronbox_token");
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`/api/jobs/${encodeURIComponent(name)}`, { method: "DELETE", headers });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 }
 
 export async function triggerJob(name: string): Promise<void> {

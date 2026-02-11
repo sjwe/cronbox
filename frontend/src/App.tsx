@@ -4,6 +4,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 import JobList from "./components/JobList";
 import JobDetailPage from "./components/JobDetail";
+import JobForm from "./components/JobForm";
 import Settings from "./components/Settings";
 import AdminUsers from "./components/AdminUsers";
 
@@ -21,6 +22,8 @@ export default function App() {
         }
       >
         <Route path="/" element={<JobList />} />
+        <Route path="/jobs/new" element={<JobForm />} />
+        <Route path="/jobs/:name/edit" element={<JobForm />} />
         <Route path="/jobs/:name" element={<JobDetailPage />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/admin/users" element={<AdminUsers />} />

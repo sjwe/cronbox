@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchJob, fetchRun, triggerJob } from "../api";
+import { fetchJob, fetchRun, triggerJob, deleteJob } from "../api";
+import { useAuth } from "../context/AuthContext";
 import type { RunSummary } from "../types";
 import StatusBadge from "./StatusBadge";
 import LogViewer from "./LogViewer";
@@ -101,6 +102,8 @@ function RunRow({ run, jobName }: { run: RunSummary; jobName: string }) {
 
 export default function JobDetailPage() {
   const { name } = useParams<{ name: string }>();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: job, isLoading, error } = useQuery({
@@ -113,6 +116,14 @@ export default function JobDetailPage() {
   const trigger = useMutation({
     mutationFn: () => triggerJob(name!),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["job", name] }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => deleteJob(name!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      navigate("/");
+    },
   });
 
   if (isLoading) {
@@ -151,13 +162,36 @@ export default function JobDetailPage() {
             )}
           </div>
         </div>
-        <button
-          onClick={() => trigger.mutate()}
-          disabled={trigger.isPending}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50"
-        >
-          {trigger.isPending ? "Triggering..." : "Trigger Now"}
-        </button>
+        <div className="flex items-center gap-2">
+          {user?.role === "admin" && (
+            <>
+              <Link
+                to={`/jobs/${name}/edit`}
+                className="rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-600 transition-colors"
+              >
+                Edit
+              </Link>
+              <button
+                onClick={() => {
+                  if (confirm(`Delete job "${job.name}"? This cannot be undone.`)) {
+                    deleteMut.mutate();
+                  }
+                }}
+                disabled={deleteMut.isPending}
+                className="rounded-lg bg-red-500/15 px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+              >
+                {deleteMut.isPending ? "Deleting..." : "Delete"}
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => trigger.mutate()}
+            disabled={trigger.isPending}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50"
+          >
+            {trigger.isPending ? "Triggering..." : "Trigger Now"}
+          </button>
+        </div>
       </div>
 
       {/* Steps */}

@@ -72,3 +72,44 @@ export interface UserItem {
   is_active: boolean;
   created_at: string;
 }
+
+// --- Job CRUD types ---
+
+export interface StepFormData {
+  name: string;
+  command: string;
+  timeout_seconds: number | null;
+  workdir: string | null;
+  environment: Record<string, string> | null;
+  user: string | null;
+}
+
+export interface ContainerFormData {
+  mode: "persistent" | "ephemeral";
+  name: string | null;
+  image: string | null;
+  volumes: Record<string, string> | null;
+  network: string | null;
+}
+
+export interface ScheduleFormData {
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+}
+
+export interface NotifyFormData {
+  on_failure: boolean;
+  on_success: boolean;
+  discord_webhook_url: string | null;
+}
+
+export interface JobFormData {
+  name: string;
+  description: string | null;
+  schedule: ScheduleFormData;
+  container: ContainerFormData;
+  steps: StepFormData[];
+  notify: NotifyFormData | null;
+  timeout_seconds: number;
+}
