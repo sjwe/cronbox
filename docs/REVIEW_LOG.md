@@ -25,15 +25,15 @@
 - **Issue:** The entire API is unauthenticated. Anyone who can reach the server can trigger Docker job execution, read all logs, and reload configuration.
 - **Recommendation:** Add API key or JWT middleware, at minimum on mutating endpoints (trigger, reload).
 
-### HIGH: Path traversal in list_logs
+### ~~HIGH: Path traversal in list_logs~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/api/routes_logs.py:12-18`
 - **Issue:** `list_logs` constructs a directory path from user-controlled `job_name` with no traversal protection. `GET /api/logs/../../etc` lists files outside the logs directory. The sibling `get_log` endpoint correctly uses `resolve()+startswith()` — this one does not.
-- **Recommendation:** Add the same `resolve()+startswith()` check that `get_log` already has.
+- **Fix:** Added `resolve()+startswith()` guard to `list_logs`. Two traversal tests added.
 
-### HIGH: Path traversal in MCP get_log
+### ~~HIGH: Path traversal in MCP get_log~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/mcp/server.py:249-284`
 - **Issue:** Two vulnerable paths: (1) `log_path` read directly from DB with no validation, (2) `job_name` from MCP input joined into path with no traversal check. Both allow arbitrary file reads.
-- **Recommendation:** Validate all log paths with `resolve()+startswith()` against the logs directory.
+- **Fix:** Added `resolve()+startswith()` validation on both DB-stored and user-supplied paths.
 
 ### MEDIUM: Default bind on 0.0.0.0
 - **File:** `src/cronbox/config.py:12`
@@ -50,10 +50,10 @@
 - **Issue:** `apscheduler>=4.0.0a1` — alpha software in production. May contain undiscovered bugs and breaking changes.
 - **Recommendation:** Pin to a tested version rather than open-ended `>=`.
 
-### LOW: Filesystem paths in MCP error messages
+### ~~LOW: Filesystem paths in MCP error messages~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/mcp/server.py:282`
 - **Issue:** Error messages expose absolute paths to MCP clients.
-- **Recommendation:** Return generic error without full path.
+- **Fix:** Changed to generic "Log file not found" error without path.
 
 ### Clean areas
 - No hardcoded secrets — all config via pydantic-settings env vars
@@ -68,30 +68,30 @@
 
 ## Performance Findings
 
-### HIGH: N+1 queries in list_jobs (API)
+### ~~HIGH: N+1 queries in list_jobs (API)~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/api/routes_jobs.py:32-42`
 - **Issue:** For each job, opens a new DB session and queries for its last run. With 50 jobs = 50 separate DB connections + queries per dashboard load.
-- **Recommendation:** Single query with window function (ROW_NUMBER partitioned by job_name) + one shared session.
+- **Fix:** New `models/queries.py` with `get_latest_runs()` using `ROW_NUMBER()` window function. Single session, single query.
 
-### HIGH: N+1 queries in list_jobs (MCP)
+### ~~HIGH: N+1 queries in list_jobs (MCP)~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/mcp/server.py:72-82`
 - **Issue:** Identical N+1 pattern duplicated in the MCP server.
-- **Recommendation:** Same batch query fix. Extract shared logic between API and MCP.
+- **Fix:** Both API and MCP now use shared `get_latest_runs()` helper.
 
-### HIGH: Unbounded log file read (MCP)
+### ~~HIGH: Unbounded log file read (MCP)~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/mcp/server.py:284`
 - **Issue:** Reads entire log file into memory with no size limit. A 500MB log = 500MB+ memory.
-- **Recommendation:** Add max_bytes limit, return only the tail of large files.
+- **Fix:** New `utils.py` with `read_log_tail(max_bytes=1MB)` — seeks to tail of large files.
 
-### HIGH: Unbounded log file read (API)
+### ~~HIGH: Unbounded log file read (API)~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/api/routes_logs.py:49`
 - **Issue:** Same unbounded read in the REST API, returned as `PlainTextResponse`.
-- **Recommendation:** Use `StreamingResponse` or limit to last N bytes/lines.
+- **Fix:** Uses same `read_log_tail()` helper. 4 tests added (truncation + pagination).
 
-### MEDIUM: O(n^2) schedule lookup
+### ~~MEDIUM: O(n^2) schedule lookup~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/scheduler/engine.py:51-56`
 - **Issue:** `get_next_run_time` fetches ALL schedules then linear scans. Called in a loop from list_jobs, total is O(n^2).
-- **Recommendation:** Use `get_schedule(id)` for direct lookup or cache next_run_times.
+- **Fix:** `get_next_run_time` now uses direct `get_schedule(id)`. New `get_all_next_run_times()` batch method used by `list_jobs`.
 
 ### MEDIUM: New Docker client per job execution
 - **File:** `src/cronbox/executor/runner.py:40`
@@ -103,10 +103,10 @@
 - **Issue:** In persistent mode, each step calls `containers.get()` twice (once in `ensure_started`, once in `exec_in_container`).
 - **Recommendation:** Cache container object or pass it between calls.
 
-### MEDIUM: Unpaginated log file listing
+### ~~MEDIUM: Unpaginated log file listing~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/api/routes_logs.py:21-30`
 - **Issue:** Lists all files in a log directory, stats each one, no pagination. Grows unbounded over time.
-- **Recommendation:** Add limit/offset pagination.
+- **Fix:** Added `?limit=N` query param (default 100).
 
 ### MEDIUM: Un-virtualized log rendering in frontend
 - **File:** `frontend/src/components/LogViewer.tsx:76-79`
@@ -182,20 +182,20 @@ Placeholder test files exist for these modules — can be filled incrementally:
 ## Top 5 Recommendations by Impact
 
 1. **Add authentication** — the API is wide open. Even a simple API key middleware would dramatically improve security posture. → [#2](https://github.com/sjwe/cronbox/issues/2)
-2. **Fix path traversal in `list_logs` and MCP `get_log`** — allows arbitrary file reads today. Quick fix using the pattern already in `get_log`. → [#1](https://github.com/sjwe/cronbox/issues/1)
+2. ~~**Fix path traversal in `list_logs` and MCP `get_log`**~~ — **DONE** (a2faac1). Added `resolve()+startswith()` guards + 2 traversal tests. → [#1](https://github.com/sjwe/cronbox/issues/1) (closed)
 3. ~~**Add test infrastructure and critical path tests**~~ — **DONE** (ac834ad). 72 tests across 9 files. → [#5](https://github.com/sjwe/cronbox/issues/5) (closed)
-4. **Batch the N+1 queries in `list_jobs`** — biggest latency win for dashboard loads. → [#3](https://github.com/sjwe/cronbox/issues/3)
-5. **Add size limits to log file reads** — prevents OOM crashes from large Docker job logs. → [#4](https://github.com/sjwe/cronbox/issues/4)
+4. ~~**Batch the N+1 queries in `list_jobs`**~~ — **DONE** (a2faac1). Window function batch query + `get_all_next_run_times()`. → [#3](https://github.com/sjwe/cronbox/issues/3) (closed)
+5. ~~**Add size limits to log file reads**~~ — **DONE** (a2faac1). `read_log_tail()` caps at 1MB + pagination. → [#4](https://github.com/sjwe/cronbox/issues/4) (closed)
 
 ### All issues
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
-| [#1](https://github.com/sjwe/cronbox/issues/1) | Fix path traversal vulnerabilities | High | Open |
+| [#1](https://github.com/sjwe/cronbox/issues/1) | Fix path traversal vulnerabilities | High | **Closed** (a2faac1) |
 | [#2](https://github.com/sjwe/cronbox/issues/2) | Add API authentication | High | Open |
-| [#3](https://github.com/sjwe/cronbox/issues/3) | Fix N+1 queries in list_jobs | High | Open |
-| [#4](https://github.com/sjwe/cronbox/issues/4) | Add size limits to log file reads | High | Open |
-| [#5](https://github.com/sjwe/cronbox/issues/5) | Add test infrastructure and critical path tests | Critical | **Closed** |
+| [#3](https://github.com/sjwe/cronbox/issues/3) | Fix N+1 queries in list_jobs | High | **Closed** (a2faac1) |
+| [#4](https://github.com/sjwe/cronbox/issues/4) | Add size limits to log file reads | High | **Closed** (a2faac1) |
+| [#5](https://github.com/sjwe/cronbox/issues/5) | Add test infrastructure and critical path tests | Critical | **Closed** (ac834ad) |
 | [#6](https://github.com/sjwe/cronbox/issues/6) | Reduce Docker client overhead | Medium | Open |
 | [#7](https://github.com/sjwe/cronbox/issues/7) | Harden fire-and-forget background task | Medium | Open |
 | [#8](https://github.com/sjwe/cronbox/issues/8) | Virtualize LogViewer for large logs | Medium | Open |

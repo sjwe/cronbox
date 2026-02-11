@@ -333,11 +333,11 @@ Ran a parallel 3-agent code review across the full codebase. 32 findings total (
 
 The review surfaced several items that were already noted as open questions (auth, tests). Updated priorities based on actual findings:
 
-1. **Fix path traversal bugs** — quick wins, apply the existing `resolve()+startswith()` pattern to `list_logs` and MCP `get_log`. Highest severity per effort ratio. → [#1](https://github.com/sjwe/cronbox/issues/1)
+1. ~~**Fix path traversal bugs**~~ — **DONE** (a2faac1). Added `resolve()+startswith()` to `list_logs` and MCP `get_log`. MCP error messages no longer leak paths. → [#1](https://github.com/sjwe/cronbox/issues/1) (closed)
 2. **Add authentication** — at minimum API key middleware on mutating endpoints (trigger, reload). Change default bind to `127.0.0.1`. → [#2](https://github.com/sjwe/cronbox/issues/2)
 3. ~~**Add test infrastructure + critical tests**~~ — **DONE** (ac834ad). → [#5](https://github.com/sjwe/cronbox/issues/5) (closed)
-4. **Batch N+1 queries** — single query with window function for last-run-per-job. Biggest performance win. → [#3](https://github.com/sjwe/cronbox/issues/3)
-5. **Cap log file reads** — add max_bytes or streaming to prevent OOM. → [#4](https://github.com/sjwe/cronbox/issues/4)
+4. ~~**Batch N+1 queries**~~ — **DONE** (a2faac1). `ROW_NUMBER()` window function in shared `models/queries.py`. `get_all_next_run_times()` batch method. → [#3](https://github.com/sjwe/cronbox/issues/3) (closed)
+5. ~~**Cap log file reads**~~ — **DONE** (a2faac1). `read_log_tail()` in `utils.py` caps at 1MB. `list_logs` paginated with `?limit=N`. → [#4](https://github.com/sjwe/cronbox/issues/4) (closed)
 
 ---
 
@@ -379,6 +379,42 @@ Placeholder test files exist for 6 modules — to be filled incrementally:
 - `test_routes_runs.py` — pagination, job_name filtering
 - `test_config.py` — pydantic-settings env var loading with CRONBOX_ prefix
 - `test_server.py` — MCP tools and resources (7 tools, 3 resources)
+
+---
+
+## 2026-02-11 — High Priority Fixes (#1, #3, #4)
+
+Fixed the three highest-priority open issues in `a2faac1`. All 58 tests pass (was 52 before, +6 new tests).
+
+### Issue #1: Path Traversal Vulnerabilities
+
+**`routes_logs.py` — `list_logs`**: Added `resolve()+startswith()` guard after constructing `log_dir`, before iterating. Returns 403 on traversal. The sibling `get_log` already had this — was just missing from `list_logs`.
+
+**`mcp/server.py` — `get_log`**: Two code paths, both now validated:
+- DB-stored `run.log_file` path — validated against logs base dir (prevents a compromised DB row from reading arbitrary files)
+- User-supplied `job_name` joined into path — validated against logs base dir
+
+**MCP error messages**: Changed `f"Log file not found: {log_path}"` to generic `"Log file not found"` — stops leaking server filesystem paths to MCP clients.
+
+### Issue #3: N+1 Queries in list_jobs
+
+**New `models/queries.py`**: Shared `get_latest_runs(session)` helper using `ROW_NUMBER()` window function partitioned by `job_name`, ordered by `started_at desc`. Returns `dict[str, JobRun]` — one query for all jobs.
+
+**`scheduler/engine.py`**: `get_next_run_time()` now uses `get_schedule(id)` for O(1) lookup instead of fetching all schedules. New `get_all_next_run_times()` batch method fetches all schedules once and returns a dict. The `list_jobs` endpoints use the batch method.
+
+**Both API and MCP `list_jobs`** now use 1 DB session + 1 query + 1 scheduler call, down from N of each.
+
+### Issue #4: Unbounded Log File Reads
+
+**New `utils.py`**: Shared `read_log_tail(path, max_bytes=1_048_576)` helper. For files under 1MB, reads normally. For larger files, seeks to last 1MB, skips the partial first line, prepends `[... truncated, showing last 1024KB of N bytes ...]` header.
+
+**`list_logs` pagination**: Added `?limit=N` query param (default 100) to prevent unbounded directory listings.
+
+Both API `get_log` and MCP `get_log` now use `read_log_tail()`.
+
+### New files
+- `src/cronbox/models/queries.py` — shared batch query helper
+- `src/cronbox/utils.py` — shared log tail reader
 
 ---
 
