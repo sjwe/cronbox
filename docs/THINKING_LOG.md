@@ -306,12 +306,47 @@ The `log_file` field in run details is a full path (e.g., `logs/polygon_sync/202
 
 ---
 
+## 2026-02-11 — Code Review (Security, Performance, Test Coverage)
+
+Ran a parallel 3-agent code review across the full codebase. 32 findings total (6 critical, 13 high, 12 medium, 1 low). Full details in `docs/REVIEW_LOG.md`.
+
+### Key Takeaways
+
+**Security — no auth + path traversal are the top issues.**
+- The API has zero authentication on any endpoint. Combined with the default `0.0.0.0` bind, anyone on the network can trigger jobs, read logs, and reload config. The "Authentication" bullet in Open Questions below was already flagged — the review confirmed it's the #1 priority.
+- `list_logs` in `routes_logs.py` has a path traversal bug: `job_name` is joined into the log directory path with no `resolve()+startswith()` check, even though the sibling `get_log` endpoint correctly validates. Same pattern missing in MCP `get_log` (two code paths, neither validated).
+- API responses leak full server filesystem paths (`log_file` field).
+
+**Performance — N+1 queries and unbounded reads are the main concerns.**
+- `list_jobs` in both the API and MCP server opens a new DB session and runs a separate query per job to get its last run status. With 50 jobs = 50 round-trips per dashboard load.
+- `get_next_run_time` iterates all APScheduler schedules for each job (O(n) per call, O(n^2) in the list_jobs loop). Should use direct `get_schedule(id)` lookup.
+- Log file reads (`routes_logs.py` and `mcp/server.py`) load entire files into memory with no size cap. Large Docker job logs could OOM the process.
+- `DockerOperations` is instantiated per job execution instead of being shared. Container is also looked up twice per step (once in `ensure_started`, once in `exec_in_container`).
+- Frontend `LogViewer` creates a DOM node per log line with no virtualization — will choke on large logs.
+
+**Test coverage — zero tests exist.**
+- No test files, no test infrastructure, no pytest or vitest configured anywhere.
+- Every module is untested — executor, scheduler, API routes, MCP tools, notifications, models, frontend components.
+- The path traversal security guard in `get_log` has no tests verifying it works.
+
+### Decisions / Next Steps
+
+The review surfaced several items that were already noted as open questions (auth, tests). Updated priorities based on actual findings:
+
+1. **Fix path traversal bugs** — quick wins, apply the existing `resolve()+startswith()` pattern to `list_logs` and MCP `get_log`. Highest severity per effort ratio.
+2. **Add authentication** — at minimum API key middleware on mutating endpoints (trigger, reload). Change default bind to `127.0.0.1`.
+3. **Add test infrastructure + critical tests** — pytest + pytest-asyncio for backend, vitest for frontend. Start with loader, runner, and API routes.
+4. **Batch N+1 queries** — single query with window function for last-run-per-job. Biggest performance win.
+5. **Cap log file reads** — add max_bytes or streaming to prevent OOM.
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.
 - **Job dependencies**: No job-to-job dependency support in v1. If needed later, could add a `depends_on` field.
 - **Config hot-reload via filesystem watcher**: v1 uses a manual `POST /api/config/reload` endpoint. Could add `watchfiles` to auto-detect YAML changes later.
-- **Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.
+- ~~**Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.~~ **Escalated**: Code review confirmed this is the #1 security priority. Default `0.0.0.0` bind + zero auth = full API exposed to anyone on the network.
 - **WebSocket for live logs**: v1 polls for log content. Could upgrade to WebSocket streaming for real-time log following.
 - **Log retention cleanup**: `CRONBOX_LOG_RETENTION_DAYS` is configured but the cleanup task is not yet implemented. Needs a periodic job that deletes log files older than the threshold.
-- **Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.
+- ~~**Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.~~ **Escalated**: Code review found 15 test coverage gaps (6 critical). Need to add pytest + vitest infrastructure and start with executor/runner.py, scheduler/loader.py, and API routes.
