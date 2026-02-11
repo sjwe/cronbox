@@ -8,7 +8,7 @@ export default function AdminUsers() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({ username: "", email: "", password: "", role: "viewer" as const });
+  const [formData, setFormData] = useState<{ username: string; email: string; password: string; role: "admin" | "operator" | "viewer" }>({ username: "", email: "", password: "", role: "viewer" });
 
   const { data: users, isLoading } = useQuery({
     queryKey: ["admin-users"],
