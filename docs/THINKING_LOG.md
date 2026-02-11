@@ -266,6 +266,46 @@ Rationale:
 
 ---
 
+---
+
+## 2026-02-11 — Implementation Complete
+
+### What Was Built
+
+All 6 phases implemented in a single session. 50 files, ~6,250 lines of code across backend, frontend, and MCP server.
+
+### Implementation Decisions Made During Build
+
+#### APScheduler 4.x CronTrigger — Manual Field Parsing
+
+APScheduler 4.x (alpha) doesn't expose `CronTrigger.from_crontab()` reliably. Instead, the scheduler engine splits the 5-field cron string and passes individual fields (`minute`, `hour`, `day`, `month`, `day_of_week`) to `CronTrigger()`. This works identically and avoids depending on an unstable API.
+
+#### API Response Shapes — Nested vs Flat
+
+Initial backend implementation used flat fields (`cron`, `timezone`, `enabled`, `last_status`, `last_run_at`) on `JobSummary`. The frontend was designed with nested structures (`schedule: {cron, timezone, enabled}`, `last_run: {status, started_at, duration_seconds}`). Resolved by updating the backend API models to use nested structures — cleaner API contract and matches the PLAN.md spec. Required updating `api_models.py` and `routes_jobs.py`.
+
+#### MCP Server — Module-Level State vs Lifespan Context
+
+Initial MCP implementation used `from fastmcp.server.lifespan import lifespan` decorator and `ctx.lifespan_context` to access shared state. This pattern isn't documented in FastMCP 2.0. Rewrote to use `@asynccontextmanager` from stdlib as the lifespan, with module-level globals for shared state (`_settings`, `_session_factory`, `_engine`, `_startup_time`). Tools access these globals directly. Simpler, more reliable, no dependency on undocumented FastMCP internals.
+
+#### MCP Server — Standalone Operation
+
+The MCP server creates its own `SchedulerEngine`, DB session factory, and `Settings` instance during its lifespan. It does not depend on the FastAPI server running. This means `python -m cronbox.mcp` works independently — important for Claude Desktop integration where the MCP server runs as a subprocess.
+
+#### Dockerfile — Multi-Stage Build
+
+Initial Dockerfile had a build order bug: `pip install .` ran before `src/` was copied, which fails because setuptools needs the source. Fixed with a multi-stage build: stage 1 builds the frontend (Node.js), stage 2 installs Python deps with source present, then copies the frontend build artifact. Keeps the final image slim (no Node.js in production).
+
+#### Tailwind CSS v4
+
+Frontend uses Tailwind CSS v4 which has a different setup than v3: no `tailwind.config.js` needed, just `@import "tailwindcss"` in the CSS entry point and the `@tailwindcss/vite` plugin.
+
+#### Frontend LogViewer — Path Extraction
+
+The `log_file` field in run details is a full path (e.g., `logs/polygon_sync/20260211_040000.log`), but the log API endpoint expects just the filename. LogViewer extracts the filename with `logFile.split("/").pop()`.
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.
@@ -273,3 +313,5 @@ Rationale:
 - **Config hot-reload via filesystem watcher**: v1 uses a manual `POST /api/config/reload` endpoint. Could add `watchfiles` to auto-detect YAML changes later.
 - **Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.
 - **WebSocket for live logs**: v1 polls for log content. Could upgrade to WebSocket streaming for real-time log following.
+- **Log retention cleanup**: `CRONBOX_LOG_RETENTION_DAYS` is configured but the cleanup task is not yet implemented. Needs a periodic job that deletes log files older than the threshold.
+- **Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.

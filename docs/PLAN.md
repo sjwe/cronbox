@@ -323,17 +323,19 @@ Both modes work — Docker SDK uses `/var/run/docker.sock` either directly on ho
 
 ## Build Phases
 
-1. **Phase 1 — Core engine** (no UI, no API): config.py, job_config.py, loader.py, docker_ops.py, log_capture.py, runner.py, engine.py, YAML job files. **Test**: run scheduler, trigger a job, verify Docker exec works and logs are written to disk.
+All phases completed 2026-02-11.
 
-2. **Phase 2 — Persistence + API**: database.py, api_models.py, route files, main.py. Wire runner to write to SQLite. **Test**: curl endpoints, verify JSON responses match expected shapes.
+1. **Phase 1 — Core engine** ✅: config.py, job_config.py, loader.py, docker_ops.py, log_capture.py, runner.py, engine.py, YAML job files.
 
-3. **Phase 3 — Notifications**: discord.py, wire into runner failure path. **Test**: deliberately fail a job, verify Discord embed appears.
+2. **Phase 2 — Persistence + API** ✅: database.py, api_models.py, route files, main.py. Runner writes to SQLite.
 
-4. **Phase 4 — MCP server**: mcp/server.py (FastMCP tools + resources), mcp/__main__.py (CLI entrypoint). **Test**: `python -m cronbox.mcp` via STDIO, `--transport http --port 9100` via HTTP.
+3. **Phase 3 — Notifications** ✅: discord.py, wired into runner failure path.
 
-5. **Phase 5 — Frontend**: Scaffold Vite + React + TS + Tailwind, build components (JobList, JobDetail, LogViewer), wire up TanStack Query polling. **Test**: full end-to-end in browser.
+4. **Phase 4 — MCP server** ✅: mcp/server.py (FastMCP tools + resources), mcp/__main__.py (CLI entrypoint). STDIO and HTTP transports.
 
-6. **Phase 6 — Deployment + polish**: Dockerfile, docker-compose.yml, log retention cleanup task, config reload endpoint.
+5. **Phase 5 — Frontend** ✅: Vite + React 18 + TypeScript + Tailwind CSS v4 + TanStack Query. Components: JobList, JobDetail, LogViewer, StatusBadge, Layout.
+
+6. **Phase 6 — Deployment** ✅: Multi-stage Dockerfile, docker-compose.yml, .gitignore.
 
 ## Verification Plan
 
@@ -346,6 +348,30 @@ Both modes work — Docker SDK uses `/var/run/docker.sock` either directly on ho
 7. MCP HTTP: `python -m cronbox.mcp --transport http --port 9100`, verify tools at `http://localhost:9100`
 8. Docker deployment: `docker compose up`, verify identical behavior
 
+## Implementation Notes
+
+### API Response Shapes
+
+The REST API returns nested structures for job data:
+
+- `GET /api/jobs` returns `JobSummary[]` with nested `schedule: {cron, timezone, enabled}` and `last_run: {status, started_at, duration_seconds} | null`
+- `GET /api/jobs/{name}` returns `JobDetail` extending `JobSummary` with `container: {mode, name?, image?}`, `steps[]`, and `recent_runs[]`
+- `GET /api/runs` returns `PaginatedRuns` with `{runs[], total, page, per_page}`
+- `GET /api/runs/{id}` returns `RunDetail` with `steps[]` (step results) and `log_file`
+- `GET /api/logs/{job_name}` returns `LogFileEntry[]` with `{filename, size_bytes, modified_at}`
+
+### MCP Server Architecture
+
+The MCP server uses module-level state initialized via an `@asynccontextmanager` lifespan passed to `FastMCP(lifespan=...)`. It creates its own `SchedulerEngine`, DB session factory, and `Settings` instance — fully standalone from the FastAPI server. Tools and resources access shared state through module globals set during lifespan initialization.
+
+### Dockerfile
+
+Uses a multi-stage build: first stage builds the frontend (Node.js + Vite), second stage installs Python deps and copies built frontend assets. This keeps the final image slim (python:3.12-slim, no Node.js).
+
+### APScheduler 4.x
+
+Uses `AsyncScheduler` with manual `CronTrigger` field parsing (minute, hour, day, month, day_of_week) since APScheduler 4.x alpha may not have `from_crontab()`. `ConflictPolicy.replace` ensures config reloads update schedules in place.
+
 ## Python Dependencies
 
 ```toml
@@ -356,7 +382,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "apscheduler>=4.0",
+    "apscheduler>=4.0.0a1",
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
     "docker>=7.0",
@@ -366,3 +392,10 @@ dependencies = [
     "fastmcp>=2.0",
 ]
 ```
+
+## Frontend Dependencies
+
+- react, react-dom, react-router-dom
+- @tanstack/react-query
+- tailwindcss (v4) + @tailwindcss/vite
+- TypeScript, Vite, ESLint
