@@ -333,11 +333,52 @@ Ran a parallel 3-agent code review across the full codebase. 32 findings total (
 
 The review surfaced several items that were already noted as open questions (auth, tests). Updated priorities based on actual findings:
 
-1. **Fix path traversal bugs** — quick wins, apply the existing `resolve()+startswith()` pattern to `list_logs` and MCP `get_log`. Highest severity per effort ratio.
-2. **Add authentication** — at minimum API key middleware on mutating endpoints (trigger, reload). Change default bind to `127.0.0.1`.
-3. **Add test infrastructure + critical tests** — pytest + pytest-asyncio for backend, vitest for frontend. Start with loader, runner, and API routes.
-4. **Batch N+1 queries** — single query with window function for last-run-per-job. Biggest performance win.
-5. **Cap log file reads** — add max_bytes or streaming to prevent OOM.
+1. **Fix path traversal bugs** — quick wins, apply the existing `resolve()+startswith()` pattern to `list_logs` and MCP `get_log`. Highest severity per effort ratio. → [#1](https://github.com/sjwe/cronbox/issues/1)
+2. **Add authentication** — at minimum API key middleware on mutating endpoints (trigger, reload). Change default bind to `127.0.0.1`. → [#2](https://github.com/sjwe/cronbox/issues/2)
+3. ~~**Add test infrastructure + critical tests**~~ — **DONE** (ac834ad). → [#5](https://github.com/sjwe/cronbox/issues/5) (closed)
+4. **Batch N+1 queries** — single query with window function for last-run-per-job. Biggest performance win. → [#3](https://github.com/sjwe/cronbox/issues/3)
+5. **Cap log file reads** — add max_bytes or streaming to prevent OOM. → [#4](https://github.com/sjwe/cronbox/issues/4)
+
+---
+
+## 2026-02-11 — Test Infrastructure Added
+
+Added test infrastructure and 72 tests (52 backend, 20 frontend) in `ac834ad`. Closes [#5](https://github.com/sjwe/cronbox/issues/5).
+
+### What Was Built
+
+**Python backend (52 tests in 6 files):**
+- `conftest.py` with 7 shared fixtures: in-memory SQLite engine/session, test `Settings` with temp dirs, mock `DockerOperations`, FastAPI `AsyncClient` via `ASGITransport`, sample `JobConfig`
+- `test_loader.py` (8) — YAML config loading: valid configs, empty/nonexistent dirs, non-yaml skipped, empty YAML skipped, missing fields raises ValidationError
+- `test_job_config.py` (18) — All Pydantic models: StepConfig, ContainerConfig, ScheduleConfig, NotifyConfig, JobConfig — required/optional fields, defaults, validation errors
+- `test_docker_ops.py` (9) — Docker ops with mocked client: ensure_started, exec_in_container (demuxed/bytes/options), run_ephemeral (basic/options/none), close
+- `test_routes_logs.py` (6) — Log routes including **path traversal security test** (verifies `../` returns 403)
+- `test_routes_jobs.py` (7) — Job API: list empty/with jobs/with last run, get existing/404, trigger existing/404
+- `test_discord.py` (4) — Discord notifications: empty webhook early return, embed structure, log_url conditional
+
+**TypeScript frontend (20 tests in 3 files):**
+- vitest + jsdom configured in `vite.config.ts`
+- `JobList.test.ts` (7) — `parseCronSchedule` (5 cron patterns incl. midnight edge case) + `relativeTime` (past/future)
+- `LogViewer.test.ts` (7) — `highlightLine` for STDERR/STDOUT/exit codes/keywords/plain
+- `api.test.ts` (6) — fetchJobs, fetchJSON error, triggerJob POST, fetchRuns query building, fetchLogContent text
+
+### Decisions Made During Build
+
+**Exported internal functions for testing:** `parseCronSchedule`, `relativeTime` (JobList.tsx), and `highlightLine` (LogViewer.tsx) were internal functions. Added named exports so vitest can import them directly. Default component exports unchanged.
+
+**FastAPI test client approach:** Used httpx `AsyncClient` with `ASGITransport` rather than FastAPI's sync `TestClient`. This allows proper async test execution matching the app's async handlers. The `async_client` fixture bypasses the app lifespan and injects test state (in-memory DB, mock scheduler) directly onto `app.state`.
+
+**Test runner path:** The correct Python/pytest is the conda base at `/opt/homebrew/Caskroom/miniconda/base/bin/python -m pytest` — the PATH `python` may point to a different project's venv.
+
+### Remaining Gaps
+
+Placeholder test files exist for 6 modules — to be filled incrementally:
+- `test_runner.py` — executor step sequencing, timeouts, failure cascading (most complex, needs careful mocking)
+- `test_engine.py` — APScheduler lifecycle, cron registration
+- `test_database.py` — ORM relationships, schema creation, cascade delete
+- `test_routes_runs.py` — pagination, job_name filtering
+- `test_config.py` — pydantic-settings env var loading with CRONBOX_ prefix
+- `test_server.py` — MCP tools and resources (7 tools, 3 resources)
 
 ---
 
@@ -349,4 +390,4 @@ The review surfaced several items that were already noted as open questions (aut
 - ~~**Authentication**: The web UI has no auth in v1. Fine for local/VPN access. Could add basic auth or API key later.~~ **Escalated**: Code review confirmed this is the #1 security priority. Default `0.0.0.0` bind + zero auth = full API exposed to anyone on the network.
 - **WebSocket for live logs**: v1 polls for log content. Could upgrade to WebSocket streaming for real-time log following.
 - **Log retention cleanup**: `CRONBOX_LOG_RETENTION_DAYS` is configured but the cleanup task is not yet implemented. Needs a periodic job that deletes log files older than the threshold.
-- ~~**Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.~~ **Escalated**: Code review found 15 test coverage gaps (6 critical). Need to add pytest + vitest infrastructure and start with executor/runner.py, scheduler/loader.py, and API routes.
+- ~~**Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.~~ **Resolved** (ac834ad): 72 tests added (52 backend, 20 frontend). Remaining gaps: runner, engine, database, runs routes, config, MCP server — placeholder files ready.

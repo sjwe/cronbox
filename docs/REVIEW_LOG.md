@@ -122,55 +122,82 @@
 
 ## Test Coverage Findings
 
-**The project has zero test files and zero test infrastructure.** No pytest, no vitest, no test configuration of any kind.
+> **RESOLVED (ac834ad):** Test infrastructure added and 72 tests written. See remediation details below.
+
+~~**The project has zero test files and zero test infrastructure.** No pytest, no vitest, no test configuration of any kind.~~
 
 ### CRITICAL: Untested core modules
 
-| File | What's Untested |
-|------|-----------------|
-| `executor/runner.py:17` | Job execution engine — Docker orchestration, step sequencing, timeouts, failure cascading, notifications |
-| `executor/docker_ops.py:4` | All Docker operations — start, exec, ephemeral runs, output demuxing |
-| `scheduler/engine.py:10` | Cron scheduling — fragile 5-part cron parsing, APScheduler lifecycle |
-| `scheduler/loader.py:8` | YAML config loading — missing validation for invalid YAML, empty files, missing fields |
-| `api/routes_jobs.py` | 4 endpoints including trigger (executes Docker) and reload (modifies scheduler) |
-| `api/routes_runs.py` | Run listing with pagination and filtering |
+| File | What's Untested | Status |
+|------|-----------------|--------|
+| `executor/runner.py:17` | Job execution engine — Docker orchestration, step sequencing, timeouts, failure cascading, notifications | Placeholder |
+| `executor/docker_ops.py:4` | All Docker operations — start, exec, ephemeral runs, output demuxing | **9 tests added** |
+| `scheduler/engine.py:10` | Cron scheduling — fragile 5-part cron parsing, APScheduler lifecycle | Placeholder |
+| `scheduler/loader.py:8` | YAML config loading — missing validation for invalid YAML, empty files, missing fields | **8 tests added** |
+| `api/routes_jobs.py` | 4 endpoints including trigger (executes Docker) and reload (modifies scheduler) | **7 tests added** |
+| `api/routes_runs.py` | Run listing with pagination and filtering | Placeholder |
 
 ### HIGH: Untested security-critical and integration modules
 
-| File | What's Untested |
-|------|-----------------|
-| `api/routes_logs.py` | Path traversal guard is security-critical with zero tests |
-| `mcp/server.py` | 7 MCP tools + 3 resources |
-| `notifications/discord.py` | Webhook payload construction, HTTP error handling |
-| `models/database.py` | Schema creation, ORM relationships, session lifecycle |
-| `models/job_config.py` | Pydantic validation, defaults, required fields |
-| `config.py` | Environment variable loading with CRONBOX_ prefix |
+| File | What's Untested | Status |
+|------|-----------------|--------|
+| `api/routes_logs.py` | Path traversal guard is security-critical with zero tests | **6 tests added (incl. traversal test)** |
+| `mcp/server.py` | 7 MCP tools + 3 resources | Placeholder |
+| `notifications/discord.py` | Webhook payload construction, HTTP error handling | **4 tests added** |
+| `models/database.py` | Schema creation, ORM relationships, session lifecycle | Placeholder |
+| `models/job_config.py` | Pydantic validation, defaults, required fields | **18 tests added** |
+| `config.py` | Environment variable loading with CRONBOX_ prefix | Placeholder |
 
 ### MEDIUM: Untested frontend logic
 
-| File | What's Untested |
-|------|-----------------|
-| `frontend/src/api.ts` | 7 API client functions, error handling |
-| `frontend/src/components/JobList.tsx:8` | `parseCronSchedule` and `relativeTime` pure functions |
-| `frontend/src/components/LogViewer.tsx:10` | `highlightLine` branching logic |
+| File | What's Untested | Status |
+|------|-----------------|--------|
+| `frontend/src/api.ts` | 7 API client functions, error handling | **6 tests added** |
+| `frontend/src/components/JobList.tsx:8` | `parseCronSchedule` and `relativeTime` pure functions | **7 tests added** |
+| `frontend/src/components/LogViewer.tsx:10` | `highlightLine` branching logic | **7 tests added** |
 
-### Infrastructure needed
+### Infrastructure — DONE
 
 **Python backend:**
-- Add `pytest`, `pytest-asyncio`, `httpx`, `pytest-cov` to dev dependencies
-- Create `conftest.py` with async fixtures, in-memory SQLite, mock Docker client
-- Create `tests/` directory mirroring `src/cronbox/`
+- ~~Add `pytest`, `pytest-asyncio`, `httpx`, `pytest-cov` to dev dependencies~~ Done
+- ~~Create `conftest.py` with async fixtures, in-memory SQLite, mock Docker client~~ Done (7 fixtures)
+- ~~Create `tests/` directory mirroring `src/cronbox/`~~ Done
 
 **TypeScript frontend:**
-- Add `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `msw` to devDependencies
-- Add vitest config to `vite.config.ts`
+- ~~Add `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `jsdom` to devDependencies~~ Done
+- ~~Add vitest config to `vite.config.ts`~~ Done
+
+### Remaining gaps
+
+Placeholder test files exist for these modules — can be filled incrementally:
+- `tests/executor/test_runner.py` — job execution engine (step sequencing, timeouts, failure cascading)
+- `tests/scheduler/test_engine.py` — APScheduler lifecycle, cron registration
+- `tests/models/test_database.py` — ORM relationships, schema creation
+- `tests/api/test_routes_runs.py` — pagination, filtering
+- `tests/test_config.py` — env var loading
+- `tests/mcp/test_server.py` — MCP tools and resources
 
 ---
 
 ## Top 5 Recommendations by Impact
 
-1. **Add authentication** — the API is wide open. Even a simple API key middleware would dramatically improve security posture.
-2. **Fix path traversal in `list_logs` and MCP `get_log`** — allows arbitrary file reads today. Quick fix using the pattern already in `get_log`.
-3. **Add test infrastructure and critical path tests** — start with `executor/runner.py`, `scheduler/loader.py`, and API routes.
-4. **Batch the N+1 queries in `list_jobs`** — biggest latency win for dashboard loads.
-5. **Add size limits to log file reads** — prevents OOM crashes from large Docker job logs.
+1. **Add authentication** — the API is wide open. Even a simple API key middleware would dramatically improve security posture. → [#2](https://github.com/sjwe/cronbox/issues/2)
+2. **Fix path traversal in `list_logs` and MCP `get_log`** — allows arbitrary file reads today. Quick fix using the pattern already in `get_log`. → [#1](https://github.com/sjwe/cronbox/issues/1)
+3. ~~**Add test infrastructure and critical path tests**~~ — **DONE** (ac834ad). 72 tests across 9 files. → [#5](https://github.com/sjwe/cronbox/issues/5) (closed)
+4. **Batch the N+1 queries in `list_jobs`** — biggest latency win for dashboard loads. → [#3](https://github.com/sjwe/cronbox/issues/3)
+5. **Add size limits to log file reads** — prevents OOM crashes from large Docker job logs. → [#4](https://github.com/sjwe/cronbox/issues/4)
+
+### All issues
+
+| # | Issue | Severity | Status |
+|---|-------|----------|--------|
+| [#1](https://github.com/sjwe/cronbox/issues/1) | Fix path traversal vulnerabilities | High | Open |
+| [#2](https://github.com/sjwe/cronbox/issues/2) | Add API authentication | High | Open |
+| [#3](https://github.com/sjwe/cronbox/issues/3) | Fix N+1 queries in list_jobs | High | Open |
+| [#4](https://github.com/sjwe/cronbox/issues/4) | Add size limits to log file reads | High | Open |
+| [#5](https://github.com/sjwe/cronbox/issues/5) | Add test infrastructure and critical path tests | Critical | **Closed** |
+| [#6](https://github.com/sjwe/cronbox/issues/6) | Reduce Docker client overhead | Medium | Open |
+| [#7](https://github.com/sjwe/cronbox/issues/7) | Harden fire-and-forget background task | Medium | Open |
+| [#8](https://github.com/sjwe/cronbox/issues/8) | Virtualize LogViewer for large logs | Medium | Open |
+| [#9](https://github.com/sjwe/cronbox/issues/9) | Stop leaking filesystem paths in API responses | Medium | Open |
+| [#10](https://github.com/sjwe/cronbox/issues/10) | Pin APScheduler to a tested version | Medium | Open |
