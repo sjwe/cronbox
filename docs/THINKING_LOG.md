@@ -641,6 +641,36 @@ For `routes_jobs.py`, imported the wrapper from `main.py` (same function, avoids
 
 ---
 
+## 2026-02-11 — Deployment Onboarding & Trailing Slash Fix
+
+### User Prompt
+"I get this error when trying to create an API key: POST /api/keys HTTP/1.1 405 Method Not Allowed"
+
+### Context
+After fixing the build and startup errors, the user deployed with `docker compose up` and hit two more issues: (1) "JWT not configured" because `docker-compose.yml` was missing `CRONBOX_JWT_SECRET`, and (2) 405 Method Not Allowed on `POST /api/keys` and `POST /api/admin/users`.
+
+### Thinking Process
+**JWT not configured**: The `docker-compose.yml` environment section had `DISCORD_WEBHOOK_URL` and `WEB_BASE_URL` but was missing `CRONBOX_JWT_SECRET`. Without it, the app starts in dev mode (no auth). Added the env var and created `.env.example` + README bootstrap steps so future deployments don't hit this.
+
+**405 on POST /api/keys**: FastAPI routes defined as `@router.post("/")` on a router with `prefix="/api/keys"` register the path `/api/keys/` (with trailing slash). The frontend calls `/api/keys` (no trailing slash). FastAPI treats these as different paths — GET on `/api/keys` happens to work (likely redirected), but POST returns 405 because only `/api/keys/` has a POST handler.
+
+### Implementation Decisions
+Changed route decorators from `"/"` to `""` in both `routes_keys.py` and `routes_users.py`. This makes the routes match at exactly the prefix path without requiring a trailing slash. Both GET and POST routes updated for consistency.
+
+Also rewrote the README Quick Start from a generic `docker compose up` to a 5-step walkthrough: generate JWT secret, create `.env`, build, create admin user, log in. Added an Authentication section and expanded the API table with role requirements.
+
+### Technical Choices
+- `""` instead of `"/"` in route decorators — FastAPI convention for matching the prefix exactly
+- `.env.example` with comments rather than a setup script — simpler, more transparent
+- `openssl rand -hex 32` for JWT secret generation — available on all Unix systems, cryptographically secure
+
+### Impact
+- `POST /api/keys` and `POST /api/admin/users` now work without trailing slash
+- New deployments have a clear bootstrap path (`.env.example` → `.env` → create-user → login)
+- `docker-compose.yml` correctly passes JWT_SECRET to the container
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.

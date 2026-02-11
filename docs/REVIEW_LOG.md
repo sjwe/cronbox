@@ -246,3 +246,24 @@ Placeholder test files exist for these modules — can be filled incrementally:
 - These bugs were only visible at runtime (Docker build + container startup), not caught by existing tests
 - The nested function pattern worked with older APScheduler versions but fails with v4's serialization requirement
 - The TS error was introduced when the auth system added the AdminUsers component with an overly-narrow type
+
+---
+
+## Review: 2026-02-11 — Deployment Onboarding & Trailing Slash Fix
+
+### Changes
+- `docker-compose.yml`: Added `CRONBOX_JWT_SECRET=${JWT_SECRET}` — was missing, causing "JWT not configured" on startup
+- `.env.example`: New file with documented env vars (JWT_SECRET, DISCORD_WEBHOOK_URL, WEB_BASE_URL)
+- `README.md`: Rewrote Quick Start with 5-step Docker Compose bootstrap, added Authentication section with RBAC docs, expanded API table with role requirements, added `CRONBOX_JWT_SECRET` and `CRONBOX_MCP_API_KEY` to config table
+- `.gitignore`: Added `.jwt_secret`
+- `src/cronbox/api/routes_keys.py`: Changed `@router.post("/")` and `@router.get("/")` to `""` — fixes 405 on `POST /api/keys` without trailing slash
+- `src/cronbox/api/routes_users.py`: Same trailing slash fix for `GET` and `POST` on `/api/admin/users`
+
+### Decisions
+- Route paths use `""` instead of `"/"` — FastAPI convention for matching exactly at the router prefix without requiring trailing slash
+- `.env.example` rather than a setup script — transparent, user edits directly
+- JWT secret generation via `openssl rand -hex 32` — universally available, no extra tooling
+
+### Notes
+- The 405 error only affects POST/DELETE — GET requests to prefixed routers with `"/"` often work due to redirect, masking the issue
+- All auth-related routes (`routes_auth.py`, `routes_jobs.py`, `routes_runs.py`, `routes_logs.py`) already used path patterns without trailing slash — only `routes_keys.py` and `routes_users.py` had the bug
