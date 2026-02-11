@@ -208,6 +208,46 @@ Rationale:
 
 ---
 
+## Decision: MCP Server → FastMCP for LLM Access
+
+**Context**: Add a way for LLMs (Claude Desktop, Claude Code, etc.) to programmatically query cronbox status and control jobs.
+
+**Options considered:**
+- No MCP, REST API only (LLMs would need custom HTTP tool wrappers)
+- Custom MCP implementation from scratch
+- FastMCP framework
+
+**Choice: FastMCP**
+
+Rationale:
+- FastMCP is the standard Python framework for building MCP servers — clean decorator-based API
+- Supports both STDIO transport (for Claude Desktop / local LLM tools) and HTTP transport (for remote access) out of the box
+- `@mcp.tool` decorator maps naturally to cronbox operations (list_jobs, trigger_job, get_log, etc.)
+- `@mcp.resource` decorator exposes read-only data (job configs, system status)
+- Runs as a separate entrypoint (`python -m cronbox.mcp`) — no coupling to the FastAPI server
+- Reuses all internal cronbox modules (loader, database, runner) — no logic duplication
+- Minimal new code: one server.py file defining tools + resources, one __main__.py for the CLI entrypoint
+
+**Transport design:**
+- **STDIO** (default): `python -m cronbox.mcp` — for local LLM integration (Claude Desktop, Claude Code)
+- **HTTP**: `python -m cronbox.mcp --transport http --port 9100` — for remote access, runs on port 9100 (separate from FastAPI on 8000)
+
+**Tools exposed (7):**
+- `list_jobs` — all jobs with schedule, next run, last status
+- `get_job` — single job detail + recent runs
+- `trigger_job` — immediate manual run
+- `list_runs` — run history (filterable by job)
+- `get_run` — run detail with per-step results
+- `get_log` — log content (latest or by run_id)
+- `reload_config` — hot-reload YAML configs
+
+**Resources exposed (3):**
+- `cronbox://jobs` — all job configs as JSON
+- `cronbox://jobs/{name}` — single job config as YAML
+- `cronbox://status` — system status (uptime, job counts, recent failures)
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.

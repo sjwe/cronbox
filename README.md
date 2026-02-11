@@ -11,6 +11,7 @@ A job scheduler and runner that manages and executes jobs inside Docker containe
 - **Run history** — success/failure tracking with duration and per-step results
 - **Discord alerts** — webhook notifications on job failure
 - **Web dashboard** — React SPA showing job status, run history, and log viewer
+- **MCP server** — LLMs can query status and control jobs via FastMCP (STDIO + HTTP)
 - **YAML config** — version-controllable job definitions, one file per job
 
 ## Quick Start
@@ -117,15 +118,57 @@ All settings are configurable via environment variables prefixed with `CRONBOX_`
 | GET | `/api/logs/{job_name}` | List log files |
 | GET | `/api/logs/{job_name}/{filename}` | Log file content |
 
+## MCP Server
+
+cronbox includes an MCP (Model Context Protocol) server so LLMs can query job status and trigger runs programmatically.
+
+### STDIO (Claude Desktop / Claude Code)
+
+```bash
+python -m cronbox.mcp
+```
+
+Claude Desktop config:
+```json
+{
+  "mcpServers": {
+    "cronbox": {
+      "command": "python",
+      "args": ["-m", "cronbox.mcp"],
+      "cwd": "/path/to/cronbox"
+    }
+  }
+}
+```
+
+### HTTP (remote access)
+
+```bash
+python -m cronbox.mcp --transport http --port 9100
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_jobs` | List all jobs with schedule, next run, last status |
+| `get_job` | Get job config + recent runs |
+| `trigger_job` | Trigger an immediate manual run |
+| `list_runs` | List recent runs (filterable by job) |
+| `get_run` | Get run detail with per-step results |
+| `get_log` | Get log content for a run |
+| `reload_config` | Hot-reload YAML job configs |
+
 ## Project Structure
 
 ```
 ├── config/jobs/          # YAML job definitions
-├── src/cronbox/       # Python backend
+├── src/cronbox/          # Python backend
 │   ├── main.py           # FastAPI app
 │   ├── scheduler/        # APScheduler engine + YAML loader
 │   ├── executor/         # Docker execution + log capture
 │   ├── notifications/    # Discord webhooks
+│   ├── mcp/              # FastMCP server (STDIO + HTTP)
 │   └── api/              # REST API routes
 ├── frontend/             # React SPA
 ├── docs/                 # Design docs
