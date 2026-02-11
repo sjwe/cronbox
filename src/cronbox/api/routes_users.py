@@ -8,7 +8,7 @@ from cronbox.models.auth import User, UserRole, hash_password
 router = APIRouter(prefix="/api/admin/users")
 
 
-@router.get("/", response_model=list[UserResponse], dependencies=[Depends(require_admin)])
+@router.get("", response_model=list[UserResponse], dependencies=[Depends(require_admin)])
 async def list_users(request: Request):
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
@@ -26,7 +26,7 @@ async def list_users(request: Request):
     ]
 
 
-@router.post("/", response_model=UserResponse, dependencies=[Depends(require_admin)])
+@router.post("", response_model=UserResponse, dependencies=[Depends(require_admin)])
 async def create_user(body: CreateUserRequest, request: Request):
     session_factory = request.app.state.session_factory
     async with session_factory() as session:

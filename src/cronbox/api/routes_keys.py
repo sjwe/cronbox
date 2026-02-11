@@ -10,7 +10,7 @@ from cronbox.models.auth import APIKey, User, UserRole, generate_api_key
 router = APIRouter(prefix="/api/keys")
 
 
-@router.post("/", response_model=APIKeyResponse)
+@router.post("", response_model=APIKeyResponse)
 async def create_key(
     body: CreateAPIKeyRequest,
     request: Request,
@@ -45,7 +45,7 @@ async def create_key(
         )
 
 
-@router.get("/", response_model=list[APIKeyListItem])
+@router.get("", response_model=list[APIKeyListItem])
 async def list_keys(
     request: Request,
     current_user: User = Depends(get_current_user),
