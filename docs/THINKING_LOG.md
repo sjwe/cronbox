@@ -609,6 +609,38 @@ All three issues are independent with no file overlap — ideal for parallel age
 
 ---
 
+## 2026-02-11 — Runtime Bug Fixes (TS Build + APScheduler Serialization)
+
+### User Prompt
+"spin up a team to handle any remaining issues"
+
+### Context
+After all 11 issues were closed and code was pushed, the user attempted `docker compose up` and hit two runtime errors: (1) a TypeScript build failure preventing the frontend from compiling, and (2) an APScheduler SerializationError preventing the backend from starting.
+
+### Thinking Process
+**TS build error**: The error pointed to `AdminUsers.tsx:89` — assigning `"admin" | "operator" | "viewer"` to a type that only accepted `"viewer"`. Traced to line 11 where `useState` used `"viewer" as const`, which narrows the inferred type to the literal `"viewer"` rather than the union. The select `onChange` handler then tries to assign the broader union back, which TS rejects.
+
+**APScheduler SerializationError**: The traceback showed `callable_to_ref` failing on a nested function. APScheduler v4 serializes job callables by converting them to importable dotted references (e.g., `cronbox.main._execute_job_wrapper`). Nested/closure functions can't be referenced this way. Searched for all instances — found 4 nested wrappers across 3 files (`main.py`, `routes_jobs.py`, `mcp/server.py`).
+
+### Implementation Decisions
+**TS fix**: Replaced `"viewer" as const` with an explicit generic type parameter on `useState<{ ...; role: "admin" | "operator" | "viewer" }>`. This preserves type safety while allowing all valid role values.
+
+**APScheduler fix**: Moved wrappers to module level and passed dependencies (session_factory, settings, docker_ops) via APScheduler's `kwargs` mechanism instead of closures. Each call site now passes a `kwargs=dict(...)` to `register_jobs()`, which forwards them to `scheduler.add_schedule()`. The `register_jobs` signature was extended with an optional `kwargs: dict | None = None` parameter.
+
+For `routes_jobs.py`, imported the wrapper from `main.py` (same function, avoids duplication). For `mcp/server.py`, defined its own `_mcp_execute_job_wrapper` at module level to avoid circular imports with `main.py`.
+
+### Technical Choices
+- Explicit generic on `useState` rather than a type alias — keeps the type local to where it's used
+- `kwargs` passed through APScheduler's native mechanism rather than `functools.partial` — cleaner and lets APScheduler serialize the function reference correctly
+- Separate wrapper in MCP server vs importing from main — avoids circular import between `main.py` ↔ `mcp/server.py`
+
+### Impact
+- Docker build now succeeds (TS compilation passes)
+- Container starts successfully (APScheduler can serialize all job callables)
+- All 4 nested wrapper sites eliminated across the codebase
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.

@@ -508,6 +508,10 @@ The MCP server uses module-level state initialized via an `@asynccontextmanager`
 
 Uses a multi-stage build: first stage builds the frontend (Node.js + Vite), second stage installs Python deps and copies built frontend assets. This keeps the final image slim (python:3.12-slim, no Node.js).
 
+### APScheduler 4.x — Serialization Constraint
+
+APScheduler v4 requires all job callables to be module-level functions (not nested closures). It serializes them to dotted import references (e.g., `cronbox.main._execute_job_wrapper`) via `callable_to_ref()`. Dependencies that would normally be captured by closure must instead be passed via APScheduler's `kwargs` parameter on `add_schedule()`.
+
 ### APScheduler 4.x
 
 Uses `AsyncScheduler` with manual `CronTrigger` field parsing (minute, hour, day, month, day_of_week) since APScheduler 4.x alpha may not have `from_crontab()`. `ConflictPolicy.replace` ensures config reloads update schedules in place.

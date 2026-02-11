@@ -225,3 +225,24 @@ Placeholder test files exist for these modules — can be filled incrementally:
 - All 11 issues from the original code review are now closed
 - All 120 tests pass (94 backend + 26 frontend)
 - No new tests added in this round — existing test coverage already validates the changed code paths
+
+---
+
+## Review: 2026-02-11 — Runtime Bug Fixes (TS Build + APScheduler Serialization)
+
+### Changes
+- `frontend/src/components/AdminUsers.tsx`: Fixed `useState` type — replaced `"viewer" as const` (narrows to literal `"viewer"`) with explicit generic `useState<{ ...; role: "admin" | "operator" | "viewer" }>` so the role select onChange can assign any valid role.
+- `src/cronbox/main.py`: Moved `_execute_job_wrapper` from nested closure inside `lifespan()` to module-level function. Dependencies passed via `kwargs` through APScheduler.
+- `src/cronbox/scheduler/engine.py`: Extended `register_jobs()` with optional `kwargs: dict | None = None` parameter, forwarded to `scheduler.add_schedule()`.
+- `src/cronbox/api/routes_jobs.py`: Replaced nested `_execute_job_wrapper` with import from `cronbox.main`, passing kwargs.
+- `src/cronbox/mcp/server.py`: Replaced two nested `_execute_job_wrapper` closures with module-level `_mcp_execute_job_wrapper`, passing kwargs. Both the lifespan and `reload_config` tool updated.
+
+### Decisions
+- Separate module-level wrapper in MCP server (not imported from main) to avoid circular imports
+- Used APScheduler's native `kwargs` mechanism rather than `functools.partial` for cleaner serialization
+- All GitHub issues (#6, #8, #10) verified and closed by 3-agent team before these fixes
+
+### Notes
+- These bugs were only visible at runtime (Docker build + container startup), not caught by existing tests
+- The nested function pattern worked with older APScheduler versions but fails with v4's serialization requirement
+- The TS error was introduced when the auth system added the AdminUsers component with an overly-narrow type
