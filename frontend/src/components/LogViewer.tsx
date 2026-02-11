@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { fetchLogContent } from "../api";
 
 interface Props {
@@ -29,7 +30,7 @@ export function highlightLine(line: string): ReactNode {
 
 export default function LogViewer({ jobName, logFile }: Props) {
   const [follow, setFollow] = useState(false);
-  const containerRef = useRef<HTMLPreElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Extract just the filename from full path (e.g. "logs/polygon_sync/20260211_040000.log" → "20260211_040000.log")
   const filename = logFile.includes("/") ? logFile.split("/").pop()! : logFile;
@@ -38,6 +39,14 @@ export default function LogViewer({ jobName, logFile }: Props) {
     queryKey: ["log", jobName, filename],
     queryFn: () => fetchLogContent(jobName, filename),
     refetchInterval: follow ? 3000 : false,
+  });
+
+  const lines = useMemo(() => content?.split("\n") ?? [], [content]);
+
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => 20,
   });
 
   useEffect(() => {
@@ -68,16 +77,37 @@ export default function LogViewer({ jobName, logFile }: Props) {
           {follow ? "Following" : "Follow"}
         </button>
       </div>
-      <pre
+      <div
         ref={containerRef}
         className="max-h-96 overflow-auto rounded-lg bg-gray-950 border border-gray-800 p-4 text-xs leading-relaxed font-mono text-gray-400"
       >
-        {content
-          ? content.split("\n").map((line, i) => (
-              <div key={i}>{highlightLine(line)}</div>
-            ))
-          : "Loading..."}
-      </pre>
+        {content ? (
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: "100%",
+              position: "relative",
+            }}
+          >
+            {virtualizer.getVirtualItems().map((item) => (
+              <div
+                key={item.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${item.start}px)`,
+                }}
+              >
+                {highlightLine(lines[item.index])}
+              </div>
+            ))}
+          </div>
+        ) : (
+          "Loading..."
+        )}
+      </div>
     </div>
   );
 }

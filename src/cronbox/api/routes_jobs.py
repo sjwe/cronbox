@@ -154,10 +154,11 @@ async def trigger_job(name: str, request: Request):
 
     settings = request.app.state.settings
     session_factory = request.app.state.session_factory
+    docker_ops = getattr(request.app.state, "docker_ops", None)
 
     async def run_in_background():
         async with session_factory() as session:
-            await execute_job(config, "manual", db_session=session, settings=settings)
+            await execute_job(config, "manual", db_session=session, settings=settings, docker_ops=docker_ops)
 
     task = asyncio.create_task(run_in_background())
     task.add_done_callback(lambda t: _task_done_callback(name, t))
@@ -173,10 +174,12 @@ async def reload_config(request: Request):
 
     configs = load_jobs(settings.jobs_config_dir)
 
+    docker_ops = getattr(request.app.state, "docker_ops", None)
+
     async def _execute_job_wrapper(job_config):
         session_factory = request.app.state.session_factory
         async with session_factory() as session:
-            await execute_job(job_config, "scheduled", db_session=session, settings=settings)
+            await execute_job(job_config, "scheduled", db_session=session, settings=settings, docker_ops=docker_ops)
 
     await engine.register_jobs(configs, _execute_job_wrapper)
 

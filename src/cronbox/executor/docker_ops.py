@@ -1,15 +1,29 @@
 import docker
+from docker.models.containers import Container
 
 
 class DockerOperations:
     def __init__(self):
         self.client = docker.from_env()
+        self._container_cache: dict[str, Container] = {}
+
+    def _get_container(self, name: str) -> Container:
+        cached = self._container_cache.get(name)
+        if cached is not None:
+            return cached
+        container = self.client.containers.get(name)
+        self._container_cache[name] = container
+        return container
+
+    def invalidate(self, name: str) -> None:
+        self._container_cache.pop(name, None)
 
     def ensure_started(self, container_name: str):
-        container = self.client.containers.get(container_name)
+        container = self._get_container(container_name)
         if container.status != "running":
             container.start()
             container.reload()
+            self.invalidate(container_name)
 
     def exec_in_container(
         self,
@@ -19,7 +33,7 @@ class DockerOperations:
         environment: dict[str, str] | None = None,
         user: str | None = None,
     ) -> tuple[int, str]:
-        container = self.client.containers.get(container_name)
+        container = self._get_container(container_name)
         kwargs: dict = {
             "cmd": ["sh", "-c", command],
             "demux": True,

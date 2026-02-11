@@ -522,7 +522,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "apscheduler>=4.0.0a1",
+    "apscheduler==4.0.0a6",
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
     "docker>=7.0",
@@ -543,5 +543,6 @@ cronbox = "cronbox.cli:main"
 
 - react, react-dom, react-router-dom
 - @tanstack/react-query
+- @tanstack/react-virtual (LogViewer virtualization)
 - tailwindcss (v4) + @tailwindcss/vite
 - TypeScript, Vite, ESLint

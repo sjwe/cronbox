@@ -20,6 +20,7 @@ async def execute_job(
     *,
     db_session: AsyncSession,
     settings: Settings,
+    docker_ops: DockerOperations | None = None,
 ):
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y%m%d_%H%M%S")
@@ -37,7 +38,8 @@ async def execute_job(
     log_path = log.open(settings.logs_dir, job_config.name, timestamp)
     run.log_file = log_path
 
-    docker_ops = DockerOperations()
+    if docker_ops is None:
+        docker_ops = DockerOperations()
     failed_step_name: str | None = None
 
     try:
@@ -65,7 +67,6 @@ async def execute_job(
 
     await db_session.commit()
     log.close()
-    docker_ops.close()
 
     if run.status == "failed":
         notify = job_config.notify

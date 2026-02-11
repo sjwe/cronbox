@@ -14,6 +14,7 @@ from cronbox.api.routes_logs import router as logs_router
 from cronbox.api.routes_runs import router as runs_router
 from cronbox.api.routes_users import router as users_router
 from cronbox.config import Settings
+from cronbox.executor.docker_ops import DockerOperations
 from cronbox.executor.runner import execute_job
 import cronbox.models.auth  # noqa: F401 — register auth tables
 from cronbox.models.database import get_engine, get_session_factory, init_db
@@ -37,6 +38,10 @@ async def lifespan(app: FastAPI):
     configs = load_jobs(settings.jobs_config_dir)
     logger.info("Loaded %d job configs", len(configs))
 
+    # Shared Docker client (singleton for the app lifetime)
+    docker_ops = DockerOperations()
+    app.state.docker_ops = docker_ops
+
     # Start scheduler
     engine = SchedulerEngine()
     app.state.scheduler_engine = engine
@@ -44,7 +49,11 @@ async def lifespan(app: FastAPI):
     async def _execute_job_wrapper(job_config):
         async with app.state.session_factory() as session:
             await execute_job(
-                job_config, "scheduled", db_session=session, settings=settings
+                job_config,
+                "scheduled",
+                db_session=session,
+                settings=settings,
+                docker_ops=docker_ops,
             )
 
     await engine.start()
@@ -55,6 +64,8 @@ async def lifespan(app: FastAPI):
 
     await engine.stop()
     logger.info("Scheduler stopped")
+
+    docker_ops.close()
 
     db_engine = get_engine(settings.db_path)
     await db_engine.dispose()

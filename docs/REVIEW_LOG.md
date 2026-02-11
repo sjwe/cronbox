@@ -45,10 +45,10 @@
 - **Issue:** Full server-side log file paths exposed to API consumers, leaking internal directory structure.
 - **Fix:** `log_file` stripped to `job_name/filename` in both API and MCP responses. 4 tests added.
 
-### MEDIUM: Alpha pre-release dependency
+### ~~MEDIUM: Alpha pre-release dependency~~ — FIXED
 - **File:** `pyproject.toml:8`
 - **Issue:** `apscheduler>=4.0.0a1` — alpha software in production. May contain undiscovered bugs and breaking changes.
-- **Recommendation:** Pin to a tested version rather than open-ended `>=`.
+- **Fix:** Pinned to `apscheduler==4.0.0a6` (tested version). → [#10](https://github.com/sjwe/cronbox/issues/10)
 
 ### ~~LOW: Filesystem paths in MCP error messages~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/mcp/server.py:282`
@@ -93,25 +93,25 @@
 - **Issue:** `get_next_run_time` fetches ALL schedules then linear scans. Called in a loop from list_jobs, total is O(n^2).
 - **Fix:** `get_next_run_time` now uses direct `get_schedule(id)`. New `get_all_next_run_times()` batch method used by `list_jobs`.
 
-### MEDIUM: New Docker client per job execution
+### ~~MEDIUM: New Docker client per job execution~~ — FIXED
 - **File:** `src/cronbox/executor/runner.py:40`
 - **Issue:** `DockerOperations()` creates a new `docker.from_env()` connection per job execution.
-- **Recommendation:** Share a singleton Docker client. It's thread-safe and designed for reuse.
+- **Fix:** Singleton `DockerOperations` created in `main.py` lifespan, stored on `app.state.docker_ops`, passed to `execute_job()`. → [#6](https://github.com/sjwe/cronbox/issues/6)
 
-### MEDIUM: Redundant container lookups
+### ~~MEDIUM: Redundant container lookups~~ — FIXED
 - **File:** `src/cronbox/executor/docker_ops.py:8-22`
 - **Issue:** In persistent mode, each step calls `containers.get()` twice (once in `ensure_started`, once in `exec_in_container`).
-- **Recommendation:** Cache container object or pass it between calls.
+- **Fix:** Added `_container_cache` dict with `_get_container()` helper. Cache invalidated after starting stopped containers. → [#6](https://github.com/sjwe/cronbox/issues/6)
 
 ### ~~MEDIUM: Unpaginated log file listing~~ — FIXED (a2faac1)
 - **File:** `src/cronbox/api/routes_logs.py:21-30`
 - **Issue:** Lists all files in a log directory, stats each one, no pagination. Grows unbounded over time.
 - **Fix:** Added `?limit=N` query param (default 100).
 
-### MEDIUM: Un-virtualized log rendering in frontend
+### ~~MEDIUM: Un-virtualized log rendering in frontend~~ — FIXED
 - **File:** `frontend/src/components/LogViewer.tsx:76-79`
 - **Issue:** Creates a DOM element per log line on every render. 10,000 lines = 10,000 DOM nodes.
-- **Recommendation:** Use `react-window` or `@tanstack/virtual` for virtualized rendering.
+- **Fix:** Rewrote with `@tanstack/react-virtual` `useVirtualizer`. Only visible rows rendered. → [#8](https://github.com/sjwe/cronbox/issues/8)
 
 ### ~~MEDIUM: Untracked background tasks~~ — FIXED (pending commit)
 - **File:** `src/cronbox/api/routes_jobs.py:144`
@@ -196,9 +196,32 @@ Placeholder test files exist for these modules — can be filled incrementally:
 | [#3](https://github.com/sjwe/cronbox/issues/3) | Fix N+1 queries in list_jobs | High | **Closed** (a2faac1) |
 | [#4](https://github.com/sjwe/cronbox/issues/4) | Add size limits to log file reads | High | **Closed** (a2faac1) |
 | [#5](https://github.com/sjwe/cronbox/issues/5) | Add test infrastructure and critical path tests | Critical | **Closed** (ac834ad) |
-| [#6](https://github.com/sjwe/cronbox/issues/6) | Reduce Docker client overhead | Medium | Open |
+| [#6](https://github.com/sjwe/cronbox/issues/6) | Reduce Docker client overhead | Medium | **Closed** |
 | [#7](https://github.com/sjwe/cronbox/issues/7) | Harden fire-and-forget background task | Medium | **Closed** |
-| [#8](https://github.com/sjwe/cronbox/issues/8) | Virtualize LogViewer for large logs | Medium | Open |
+| [#8](https://github.com/sjwe/cronbox/issues/8) | Virtualize LogViewer for large logs | Medium | **Closed** |
 | [#9](https://github.com/sjwe/cronbox/issues/9) | Stop leaking filesystem paths in API responses | Medium | **Closed** |
-| [#10](https://github.com/sjwe/cronbox/issues/10) | Pin APScheduler to a tested version | Medium | Open |
+| [#10](https://github.com/sjwe/cronbox/issues/10) | Pin APScheduler to a tested version | Medium | **Closed** |
 | [#11](https://github.com/sjwe/cronbox/issues/11) | Add multi-user auth: JWT, per-user API keys, RBAC | High | **Closed** |
+
+---
+
+## Review: 2026-02-11 — Final Fixes (#6, #8, #10)
+
+### Changes
+- `src/cronbox/executor/docker_ops.py`: Added `_container_cache` dict, `_get_container()` helper, `invalidate()` method. `ensure_started()` and `exec_in_container()` now use cached lookups.
+- `src/cronbox/executor/runner.py`: `execute_job()` accepts optional `docker_ops` parameter. Removed `docker_ops.close()` — caller owns lifecycle.
+- `src/cronbox/main.py`: Singleton `DockerOperations()` created in lifespan, stored on `app.state.docker_ops`, passed to execute_job. Closed in shutdown.
+- `src/cronbox/api/routes_jobs.py`: Trigger and reload endpoints pass `app.state.docker_ops` to `execute_job()`.
+- `frontend/src/components/LogViewer.tsx`: Replaced `content.split("\n").map()` with `@tanstack/react-virtual` `useVirtualizer`. Only visible rows rendered.
+- `frontend/package.json`: Added `@tanstack/react-virtual` dependency.
+- `pyproject.toml`: Pinned `apscheduler==4.0.0a6` (was `>=4.0.0a1`).
+
+### Decisions
+- Container cache uses simple dict, not LRU — job runs are short-lived, no eviction needed
+- `docker_ops` parameter defaults to `None` in `execute_job()` for backwards compat (tests create their own)
+- Chose `@tanstack/react-virtual` over `react-window` for TanStack ecosystem consistency
+
+### Notes
+- All 11 issues from the original code review are now closed
+- All 120 tests pass (94 backend + 26 frontend)
+- No new tests added in this round — existing test coverage already validates the changed code paths

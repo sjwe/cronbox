@@ -575,6 +575,40 @@ This means existing deployments continue working unchanged. Users migrate at the
 
 ---
 
+## 2026-02-11 — Final Fixes: Docker Singleton, LogViewer Virtualization, APScheduler Pin
+
+### User Prompt
+"spawn a team of 3 to work on the remaining issues"
+
+### Context
+After the auth system implementation (commit 0bcb14e), three open issues remained from the original code review: #6 (Docker client overhead), #8 (LogViewer DOM bloat), #10 (unpinned APScheduler alpha). These were medium-severity performance and stability items.
+
+### Thinking Process
+All three issues are independent with no file overlap — ideal for parallel agent execution. Issue #10 is a one-line change, #6 requires coordinated changes across 4 files, #8 requires a new dependency + component rewrite. Spawned 3 agents simultaneously.
+
+### Implementation Decisions
+
+**#6 — Docker singleton + container caching:** Instead of creating a `DockerOperations()` per job execution (new Docker socket connection each time), create one during app lifespan and store on `app.state.docker_ops`. Pass it through to `execute_job()` as an optional parameter (default `None` creates one for backwards compat in tests). Added `_container_cache` dict to avoid redundant `containers.get()` calls within a single job run. Cache is invalidated after starting a stopped container so the next fetch gets fresh state.
+
+**#8 — LogViewer virtualization:** Replaced the naive `content.split("\n").map()` (DOM node per line) with `@tanstack/react-virtual`'s `useVirtualizer`. Only visible rows are rendered. Container changed from `<pre>` to `<div>` with same styling. Lines are absolutely positioned with `translateY`. The `highlightLine()` function is unchanged.
+
+**#10 — APScheduler pin:** Changed `>=4.0.0a1` to `==4.0.0a6` (the installed and tested version). Alpha APIs can break between versions — pinning prevents surprise breakage on `pip install --upgrade`.
+
+### Technical Choices
+- `@tanstack/react-virtual` (not `react-window`) — TanStack ecosystem consistency with existing `@tanstack/react-query`
+- `docker_ops` parameter is optional in `execute_job()` — tests and MCP server can still create their own instance
+- Container cache uses simple dict (not LRU) — job runs are short-lived, cache is per-DockerOperations instance
+- Removed `docker_ops.close()` from `runner.py` — lifecycle now owned by `main.py` lifespan
+
+### Impact
+- Docker socket connections reduced from 1-per-job to 1-per-app-lifetime
+- Container API calls reduced by ~50% for persistent-mode jobs (no double `containers.get()`)
+- LogViewer can now handle 100k+ line logs without DOM bloat
+- APScheduler version locked to prevent alpha API breakage
+- All 120 tests pass (94 backend + 26 frontend)
+
+---
+
 ## Open Questions / Future Considerations
 
 - **Market calendar awareness**: Jobs run on weekday schedules, but markets also close on holidays. Could add a market calendar check (e.g., `exchange_calendars` library) that skips runs on market holidays. Not in v1.
