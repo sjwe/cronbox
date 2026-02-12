@@ -299,3 +299,17 @@ Placeholder test files exist for these modules — can be filled incrementally:
 - All 88 backend tests pass (6 pre-existing key route tests excluded due to trailing slash mismatch)
 - All 26 frontend tests pass, frontend builds successfully
 - No new tests added for job CRUD endpoints — can be added incrementally
+
+---
+
+## Review: 2026-02-11 - Fix trailing slash in API key tests
+
+### Changes
+- `tests/api/test_routes_keys.py`: Replaced 9 occurrences of `/api/keys/` with `/api/keys` to match route definitions (routes use `""` on `APIRouter(prefix="/api/keys")`)
+
+### Decisions
+- Fix tests to match routes rather than adding redirect middleware — the routes are the source of truth for the API contract
+
+### Notes
+- All 6 key route tests now pass; full backend suite is 94 tests with no exclusions
+- No similar trailing slash mismatches found in other test files

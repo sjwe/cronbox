@@ -7,7 +7,7 @@ from cronbox.models.auth import APIKey, generate_api_key
 class TestCreateKey:
     async def test_create_key_returns_full_key(self, auth_async_client, admin_user, admin_token):
         resp = await auth_async_client.post(
-            "/api/keys/",
+            "/api/keys",
             json={"name": "my-key"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
@@ -23,14 +23,14 @@ class TestListKeys:
     async def test_list_keys_hides_full_key(self, auth_async_client, admin_user, admin_token):
         # Create a key
         await auth_async_client.post(
-            "/api/keys/",
+            "/api/keys",
             json={"name": "list-test"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
 
         # List keys
         resp = await auth_async_client.get(
-            "/api/keys/",
+            "/api/keys",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -45,7 +45,7 @@ class TestRevokeKey:
     async def test_revoke_key(self, auth_async_client, admin_user, admin_token):
         # Create a key
         create_resp = await auth_async_client.post(
-            "/api/keys/",
+            "/api/keys",
             json={"name": "revoke-test"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
@@ -60,7 +60,7 @@ class TestRevokeKey:
 
         # Verify it shows as inactive
         list_resp = await auth_async_client.get(
-            "/api/keys/",
+            "/api/keys",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         revoked = [k for k in list_resp.json() if k["id"] == key_id]
@@ -71,7 +71,7 @@ class TestAuthWithAPIKey:
     async def test_auth_with_api_key(self, auth_async_client, admin_user, admin_token):
         # Create a key via JWT auth
         create_resp = await auth_async_client.post(
-            "/api/keys/",
+            "/api/keys",
             json={"name": "auth-test"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
@@ -89,7 +89,7 @@ class TestAuthWithAPIKey:
     ):
         # Create a key
         create_resp = await auth_async_client.post(
-            "/api/keys/",
+            "/api/keys",
             json={"name": "expire-test"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
@@ -116,7 +116,7 @@ class TestAuthWithAPIKey:
     async def test_revoked_key_rejected(self, auth_async_client, admin_user, admin_token):
         # Create and revoke a key
         create_resp = await auth_async_client.post(
-            "/api/keys/",
+            "/api/keys",
             json={"name": "revoke-auth-test"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )

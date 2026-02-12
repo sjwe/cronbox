@@ -757,3 +757,29 @@ The MCP server is not modified. It reads from `SchedulerEngine._configs` and `Sc
 - **WebSocket for live logs**: v1 polls for log content. Could upgrade to WebSocket streaming for real-time log following.
 - **Log retention cleanup**: `CRONBOX_LOG_RETENTION_DAYS` is configured but the cleanup task is not yet implemented. Needs a periodic job that deletes log files older than the threshold.
 - ~~**Tests**: No test suite yet. Priority areas: YAML loader validation, API route responses, runner step execution logic, Docker ops mocking.~~ **Resolved** (ac834ad): 72 tests added (52 backend, 20 frontend). Remaining gaps: runner, engine, database, runs routes, config, MCP server — placeholder files ready.
+
+---
+
+## Entry: 2026-02-11 - Fix trailing slash in API key tests
+
+### User Prompt
+"fix the trailing slash tests"
+
+### Context
+The `test_routes_keys.py` tests had been failing with 405 Method Not Allowed errors since commit 77f16d8 which removed trailing slashes from route definitions. The tests were excluded from CI runs as a workaround. This session fixed the root cause.
+
+### Thinking Process
+1. Identified 9 occurrences of `/api/keys/` (trailing slash) in test URLs
+2. Confirmed routes use `router.post("")` / `router.get("")` on an `APIRouter(prefix="/api/keys")` — so the actual path is `/api/keys` without trailing slash
+3. Checked other test files for similar issues — none found
+
+### Implementation Decisions
+- Fix the tests to match the routes (remove trailing slashes from test URLs) rather than adding redirect middleware or `redirect_slashes` config, which would mask the real API contract
+
+### Technical Choices
+- Simple string replacement: `/api/keys/` → `/api/keys` in all 9 test URL occurrences
+- No changes to route definitions or middleware
+
+### Impact
+- All 6 `test_routes_keys.py` tests now pass (previously excluded from test runs)
+- Full test suite: 94 backend tests pass with no exclusions
